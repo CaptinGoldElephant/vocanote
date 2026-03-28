@@ -2,14 +2,21 @@ import streamlit as st
 import pandas as pd
 import random
 import os
+import time
+import nltk
+from datetime import datetime
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-import nltk
 from nltk.stem import PorterStemmer
-from datetime import datetime
-import time
+
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+
+stemmer = PorterStemmer()
 
 # 어근 추출 도구 준비 
 stemmer = PorterStemmer()
