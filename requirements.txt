@@ -2,3 +2,5 @@ streamlit
 pandas
 reportlab
 nltk
+gspread
+google-auth
