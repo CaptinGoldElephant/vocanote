@@ -141,19 +141,17 @@ elif menu == "단어 목록 보기":
                     "word": "단어", "mean": "뜻", "root": "어근", "count": "출제수", "date": "등록일"
                 },
                 disabled=["word", "mean", "root", "count", "date"],
-                key="word_editor_single"
+                key="word_editor_final"
             )
 
             # 체크된 단어들 추출
             selected_rows = edited_df[edited_df["선택"] == True]
             
-            if len(selected_rows) > 1:
-                st.warning("가장 최근에 선택한 단어의 수정창을 보여줍니다.")
-                selected_word = selected_rows.iloc[-1]["word"] # 가장 마지막 행 선택
-            elif len(selected_rows) == 1:
-                selected_word = selected_rows.iloc[0]["word"]
-            else:
-                selected_word = None
+            # --- 🚨 오류 방지 핵심 로직 ---
+            selected_word = None
+            if not selected_rows.empty:
+                # 체크가 되었을 때만 indexer를 사용함
+                selected_word = selected_rows.iloc[-1]["word"]
 
             if selected_word:
                 st.divider()
@@ -170,6 +168,7 @@ elif menu == "단어 목록 보기":
                     new_root = st.text_input("어근 수정", value=current_root, key=f"edit_root_{selected_word}")
                 
                 btn_col1, btn_col2 = st.columns(2)
+                # (수정/삭제 버튼 로직은 기존과 동일)
                 with btn_col1:
                     if st.button("💾 수정 완료"):
                         st.session_state.confirm_update = True
@@ -205,11 +204,11 @@ elif menu == "단어 목록 보기":
                             st.session_state.pop('confirm_delete', None)
                             st.rerun()
             else:
-                st.info("수정하거나 삭제할 단어 옆의 '선택' 칸을 체크해 주세요.")
+                st.info("💡 위 표에서 수정하거나 삭제할 단어의 '선택' 칸을 체크해 주세요.")
         else:
-            st.warning("검색 결과가 없습니다.")
+            st.warning("🔍 검색 결과가 없습니다.")
     else:
-        st.info("저장된 단어가 없습니다.")
+        st.info("📥 저장된 단어가 없습니다. [단어 등록하기] 메뉴에서 먼저 단어를 추가해 주세요.")
 
 
 # 날짜별 단어 조회 화면
