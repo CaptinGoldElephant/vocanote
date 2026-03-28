@@ -153,15 +153,56 @@ elif menu == "단어 목록 보기":
             except: st.error("시트에서 해당 단어를 찾을 수 없습니다. 새로고침을 눌러주세요.")
     else: st.info("데이터가 없습니다.")
 
-# --- 메뉴 3: 날짜별 단어 조회 ---
+# --- 메뉴 3: 날짜별 단어 조회 (PDF 생성 기능 복구) ---
 elif menu == "날짜별 단어 조회":
     st.header("📅 날짜별 등록 현황")
     curr_df = st.session_state.df
     if not curr_df.empty:
-        dates = sorted(curr_df['date'].unique(), reverse=True)
-        target = st.selectbox("날짜 선택", dates)
-        d_df = curr_df[curr_df['date'] == target]
-        st.table(d_df[['word', 'mean']].sort_values("word"))
+        all_dates = sorted(curr_df['date'].unique(), reverse=True)
+        target = st.selectbox("조회할 날짜를 선택하세요", all_dates)
+        
+        date_df = curr_df[curr_df['date'] == target].sort_values("word")
+        st.subheader(f"📍 {target} 등록 단어 ({len(date_df)}개)")
+        
+        # 해당 날짜 시험지 만들기 버튼
+        if st.button(f"📄 {target} 단어 시험지(PDF) 생성"):
+            if len(date_df) > 0:
+                sel_words = date_df.to_dict('records')
+                buf = io.BytesIO()
+                c = canvas.Canvas(buf, pagesize=A4)
+                
+                # 사용자님 고유 50개 2열 레이아웃 함수
+                def draw_layout(words, is_ans, p_num):
+                    c.setFont("Malgun", 16)
+                    c.drawCentredString(300, 800, f"{target} 영단어 {'정답지' if is_ans else '시험지'} (P.{p_num})")
+                    c.setFont("Malgun", 10)
+                    for i, r in enumerate(words):
+                        col = i // 25; row_i = i % 25
+                        x = 70 + (col * 250); y = 740 - (row_i * 27)
+                        txt = f"{i+1+(p_num-1)*50}. {r['word']}"
+                        c.drawString(x, y, txt)
+                        w_w = c.stringWidth(txt, "Malgun", 10) + 10
+                        if is_ans:
+                            m = str(r['mean'])
+                            if c.stringWidth(m, "Malgun", 10) > 230: c.setFont("Malgun", 8.5)
+                            c.drawString(x + w_w, y, m); c.setFont("Malgun", 10)
+                        else:
+                            c.drawString(x + w_w, y, "____________________")
+
+                # PDF 페이지 생성
+                for p in range(0, len(sel_words), 50):
+                    draw_layout(sel_words[p:p+50], False, (p//50)+1); c.showPage()
+                for p in range(0, len(sel_words), 50):
+                    draw_layout(sel_words[p:p+50], True, (p//50)+1); c.showPage()
+                c.save()
+                st.download_button(f"📥 {target} PDF 다운로드", buf.getvalue(), f"voca_{target}.pdf")
+            else:
+                st.warning("해당 날짜에 단어가 없습니다.")
+        
+        st.divider()
+        st.table(date_df[['word', 'mean']])
+    else:
+        st.info("저장된 단어가 없습니다.")
 
 # --- 메뉴 4: 시험지 만들기 (사용자님 50개 2열 디자인 완벽 보존) ---
 elif menu == "시험지 만들기":
