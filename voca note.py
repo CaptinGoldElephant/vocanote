@@ -12,7 +12,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from nltk.stem import PorterStemmer
 
-# --- [설정] 사용자님의 구글 시트 ID 적용 ---
+# --- [설정] 구글 시트 ID (그대로 유지) ---
 SHEET_ID = "1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
@@ -25,7 +25,7 @@ except LookupError:
 stemmer = PorterStemmer()
 DB_FILE = "voca_db.csv"
 
-# 폰트 설정 (서버/로컬 공용)
+# 폰트 설정 (서버/로컬 대응)
 FONT_PATH = "malgun.ttf" 
 if not os.path.exists(FONT_PATH):
     FONT_PATH = "C:/Windows/Fonts/malgun.ttf"
@@ -41,25 +41,25 @@ def load_data():
             df['date'] = datetime.now().strftime("%Y-%m-%d")
         return df
     except:
-        # 시트 로드 실패 시 로컬 CSV 활용
         if os.path.exists(DB_FILE):
             return pd.read_csv(DB_FILE)
         return pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
 
 def save_data(df):
-    # 로컬에 저장 (백업용)
+    # 로컬 서버에 저장 (이 데이터가 세션 동안 유지됨)
     df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
-    st.info("💡 팁: 현재 구글 시트 데이터가 로드되었습니다. 등록 후 '전체 백업' 버튼으로 최신 상태를 저장하세요.")
 
 # --- 앱 메인 ---
-st.set_page_config(page_title="토익 단어장", layout="wide")
+st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
 st.title("📚 스마트 토익 단어장 (실시간 연동형)")
 
-df = load_data()
+# 세션 상태에 데이터 저장 (업로드 즉시 반영을 위함)
+if 'df' not in st.session_state:
+    st.session_state.df = load_data()
 
-# 사이드바 백업 버튼 (방법 1: 수동 백업)
+# 사이드바 백업 버튼
 st.sidebar.header("💾 데이터 백업")
-csv_data = df.to_csv(index=False, encoding="utf-8-sig")
+csv_data = st.session_state.df.to_csv(index=False, encoding="utf-8-sig")
 st.sidebar.download_button(
     label="내 컴퓨터로 전체 다운로드 (CSV)",
     data=csv_data,
@@ -67,12 +67,13 @@ st.sidebar.download_button(
     mime="text/csv"
 )
 
-menu = st.sidebar.selectbox("메뉴를 선택하세요", ["단어 등록하기", "단어 목록 보기", "시험지 만들기"])
+menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기"])
 
 # --- 메뉴 1: 단어 등록하기 ---
 if menu == "단어 등록하기":
     st.header("📝 새 단어 등록")
     tab1, tab2 = st.tabs(["직접 입력", "CSV 파일 업로드"])
+    
     with tab1:
         with st.form("word_form", clear_on_submit=True):
             word = st.text_input("단어 (영어)").strip().lower()
@@ -81,22 +82,28 @@ if menu == "단어 등록하기":
                 root = stemmer.stem(word)
                 new_row = pd.DataFrame([[word, mean, root, 0, datetime.now().strftime("%Y-%m-%d")]], 
                                         columns=["word", "mean", "root", "count", "date"])
-                df = pd.concat([df, new_row], ignore_index=True).drop_duplicates('word', keep='first')
-                save_data(df)
-                st.success(f"'{word}' 등록 완료! 반드시 백업 버튼을 눌러 저장하세요.")
+                st.session_state.df = pd.concat([st.session_state.df, new_row], ignore_index=True).drop_duplicates('word', keep='first')
+                save_data(st.session_state.df)
+                st.success(f"'{word}' 등록 완료!")
                 st.rerun()
-    # (CSV 업로드 로직 생략 없이 유지됨...)
+
     with tab2:
         uploaded_file = st.file_uploader("CSV 파일을 선택하세요", type=['csv'])
         if uploaded_file is not None:
             try:
+                # 인코딩 자동 감지 및 로드
                 try: user_csv = pd.read_csv(uploaded_file)
                 except:
                     uploaded_file.seek(0)
                     user_csv = pd.read_csv(uploaded_file, encoding='cp949')
+                
+                st.write("불러온 파일 미리보기:")
                 st.dataframe(user_csv.head())
+                
                 cols = user_csv.columns.tolist()
-                w_col = st.selectbox("단어 열", cols); m_col = st.selectbox("뜻 열", cols)
+                w_col = st.selectbox("단어 열 선택", cols)
+                m_col = st.selectbox("뜻 열 선택", cols)
+                
                 if st.button("내 단어장에 합치기"):
                     temp_df = pd.DataFrame()
                     temp_df['word'] = user_csv[w_col].astype(str).str.strip().str.lower()
@@ -104,9 +111,15 @@ if menu == "단어 등록하기":
                     temp_df['root'] = temp_df['word'].apply(lambda x: stemmer.stem(str(x)))
                     temp_df['count'] = 0
                     temp_df['date'] = datetime.now().strftime("%Y-%m-%d")
-                    df = pd.concat([df, temp_df], ignore_index=True).drop_duplicates('word', keep='first')
-                    save_data(df); st.success("합치기 완료!"); st.rerun()
-            except Exception as e: st.error(f"오류: {e}")
+                    
+                    # 데이터 합치기 핵심 로직
+                    st.session_state.df = pd.concat([st.session_state.df, temp_df], ignore_index=True).drop_duplicates('word', keep='first')
+                    save_data(st.session_state.df)
+                    st.success(f"{len(temp_df)}개의 단어가 성공적으로 합쳐졌습니다!")
+                    time.sleep(1)
+                    st.rerun()
+            except Exception as e:
+                st.error(f"오류 발생: {e}")
 
 # --- 메뉴 2: 단어 목록 보기 (날짜 필터 및 수정/삭제) ---
 elif menu == "단어 목록 보기":
