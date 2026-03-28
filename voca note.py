@@ -12,11 +12,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from nltk.stem import PorterStemmer
 
-# --- [설정] 구글 시트 ID (그대로 유지) ---
-SHEET_ID = "1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8"
-SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
-
-# --- 환경 준비 ---
+# --- 1. 배포 및 환경 준비 ---
 try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
@@ -25,6 +21,10 @@ except LookupError:
 stemmer = PorterStemmer()
 DB_FILE = "voca_db.csv"
 
+# 구글 시트 연동 설정
+SHEET_ID = "1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
+
 # 폰트 설정 (서버/로컬 대응)
 FONT_PATH = "malgun.ttf" 
 if not os.path.exists(FONT_PATH):
@@ -32,42 +32,42 @@ if not os.path.exists(FONT_PATH):
 if os.path.exists(FONT_PATH):
     pdfmetrics.registerFont(TTFont("Malgun", FONT_PATH))
 
-# --- 데이터 관리 함수 ---
+# --- 2. 데이터 관리 함수 ---
 def load_data():
     try:
-        # 구글 시트에서 최신 데이터 읽기
-        df = pd.read_csv(SHEET_URL)
-        if 'date' not in df.columns:
-            df['date'] = datetime.now().strftime("%Y-%m-%d")
-        return df
+        # 1순위: 구글 시트 시도
+        df_loaded = pd.read_csv(SHEET_URL)
+        if 'date' not in df_loaded.columns:
+            df_loaded['date'] = datetime.now().strftime("%Y-%m-%d")
+        return df_loaded
     except:
+        # 2순위: 로컬 파일 시도
         if os.path.exists(DB_FILE):
             return pd.read_csv(DB_FILE)
         return pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
 
-def save_data(df):
-    # 로컬 서버에 저장 (이 데이터가 세션 동안 유지됨)
-    df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
+def save_data(dataframe):
+    dataframe.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
 
-# --- 앱 메인 ---
+# --- 3. 앱 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
 st.title("📚 스마트 토익 단어장 (실시간 연동형)")
 
-# 세션 상태에 데이터 저장 (업로드 즉시 반영을 위함)
+# [중요] 세션 상태에 데이터 고정 (오류 방지 핵심)
 if 'df' not in st.session_state:
     st.session_state.df = load_data()
 
 # 사이드바 백업 버튼
-st.sidebar.header("💾 데이터 백업")
-csv_data = st.session_state.df.to_csv(index=False, encoding="utf-8-sig")
+st.sidebar.header("💾 데이터 관리")
+csv_backup = st.session_state.df.to_csv(index=False, encoding="utf-8-sig")
 st.sidebar.download_button(
-    label="내 컴퓨터로 전체 다운로드 (CSV)",
-    data=csv_data,
+    label="내 컴퓨터로 전체 백업 (CSV)",
+    data=csv_backup,
     file_name=f"voca_backup_{datetime.now().strftime('%Y%m%d')}.csv",
     mime="text/csv"
 )
 
-menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기"])
+menu = st.sidebar.selectbox("메뉴를 선택하세요", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기"])
 
 # --- 메뉴 1: 단어 등록하기 ---
 if menu == "단어 등록하기":
@@ -76,22 +76,22 @@ if menu == "단어 등록하기":
     
     with tab1:
         with st.form("word_form", clear_on_submit=True):
-            word = st.text_input("단어 (영어)").strip().lower()
-            mean = st.text_input("뜻 (한글)").strip()
-            if st.form_submit_button("등록하기") and word and mean:
-                root = stemmer.stem(word)
-                new_row = pd.DataFrame([[word, mean, root, 0, datetime.now().strftime("%Y-%m-%d")]], 
-                                        columns=["word", "mean", "root", "count", "date"])
-                st.session_state.df = pd.concat([st.session_state.df, new_row], ignore_index=True).drop_duplicates('word', keep='first')
-                save_data(st.session_state.df)
-                st.success(f"'{word}' 등록 완료!")
-                st.rerun()
+            word = st.text_input("영어 단어를 입력하세요").strip().lower()
+            mean = st.text_input("한글 뜻을 입력하세요").strip()
+            if st.form_submit_button("저장하기"):
+                if word and mean:
+                    root = stemmer.stem(word)
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    new_row = {"word": word, "mean": mean, "root": root, "count": 0, "date": today}
+                    st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_row])], ignore_index=True).drop_duplicates('word', keep='first')
+                    save_data(st.session_state.df)
+                    st.success(f"'{word}' 저장 완료!")
+                    st.rerun()
 
     with tab2:
-        uploaded_file = st.file_uploader("CSV 파일을 선택하세요", type=['csv'])
+        uploaded_file = st.file_uploader("CSV 파일을 선택하세요", type=["csv"])
         if uploaded_file is not None:
             try:
-                # 인코딩 자동 감지 및 로드
                 try: user_csv = pd.read_csv(uploaded_file)
                 except:
                     uploaded_file.seek(0)
@@ -99,7 +99,6 @@ if menu == "단어 등록하기":
                 
                 st.write("불러온 파일 미리보기:")
                 st.dataframe(user_csv.head())
-                
                 cols = user_csv.columns.tolist()
                 w_col = st.selectbox("단어 열 선택", cols)
                 m_col = st.selectbox("뜻 열 선택", cols)
@@ -112,98 +111,90 @@ if menu == "단어 등록하기":
                     temp_df['count'] = 0
                     temp_df['date'] = datetime.now().strftime("%Y-%m-%d")
                     
-                    # 데이터 합치기 핵심 로직
                     st.session_state.df = pd.concat([st.session_state.df, temp_df], ignore_index=True).drop_duplicates('word', keep='first')
                     save_data(st.session_state.df)
-                    st.success(f"{len(temp_df)}개의 단어가 성공적으로 합쳐졌습니다!")
-                    time.sleep(1)
-                    st.rerun()
-            except Exception as e:
-                st.error(f"오류 발생: {e}")
+                    st.success("단어 합치기 완료!")
+                    time.sleep(1); st.rerun()
+            except Exception as e: st.error(f"오류: {e}")
 
-# --- 메뉴 2: 단어 목록 보기 (날짜 필터 및 수정/삭제) ---
+# --- 메뉴 2: 단어 목록 보기 ---
 elif menu == "단어 목록 보기":
     st.header("📋 전체 단어 관리 및 검색")
-    if len(df) > 0:
-        col_f1, col_f2 = st.columns(2)
-        with col_f1: search_query = st.text_input("🔍 검색").strip().lower()
-        with col_f2:
-            date_list = ["전체보기"] + sorted(df['date'].unique().tolist(), reverse=True)
-            selected_date = st.selectbox("📅 날짜별 조회", date_list)
-
-        f_df = df.copy()
-        if search_query: f_df = f_df[f_df['word'].str.contains(search_query, na=False)]
-        if selected_date != "전체보기": f_df = f_df[f_df['date'] == selected_date]
-        f_df = f_df.sort_values(by="word")
-
+    current_df = st.session_state.df
+    if len(current_df) > 0:
+        search = st.text_input("🔍 검색 (영어)").strip().lower()
+        f_df = current_df[current_df['word'].str.contains(search, na=False)].sort_values(by="word")
         if not f_df.empty:
             d_df = f_df.copy(); d_df.insert(0, "선택", False)
-            edited_df = st.data_editor(d_df, hide_index=True, use_container_width=True, key="voca_editor")
-            s_rows = edited_df[edited_df["선택"] == True]
+            edited = st.data_editor(d_df, hide_index=True, use_container_width=True, key="v_editor")
+            s_rows = edited[edited["선택"] == True]
             if not s_rows.empty:
                 sel_w = s_rows.iloc[-1]["word"]
-                st.divider(); st.subheader(f"⚙️ '{sel_w}' 관리")
-                idx = df[df['word'] == sel_w].index[0]
+                idx = current_df[current_df['word'] == sel_w].index[0]
                 c1, c2 = st.columns(2)
-                with c1: n_m = st.text_input("뜻 수정", value=df.at[idx, 'mean'], key=f"m_{sel_w}")
-                with c2: n_r = st.text_input("어근 수정", value=df.at[idx, 'root'], key=f"r_{sel_w}")
-                b1, b2 = st.columns(2)
-                with b1:
-                    if st.button("💾 수정 완료"):
-                        df.at[idx, 'mean'], df.at[idx, 'root'] = n_m, n_r
-                        save_data(df); st.success("수정됨!"); time.sleep(0.5); st.rerun()
-                with b2:
-                    if st.button("🗑️ 단어 삭제"):
-                        df = df.drop(idx); save_data(df); st.warning("삭제됨!"); time.sleep(0.5); st.rerun()
-        else: st.warning("결과 없음")
-    else: st.info("등록된 단어가 없습니다.")
+                with c1: n_m = st.text_input("뜻 수정", value=current_df.at[idx, 'mean'], key=f"m_{sel_w}")
+                with c2: n_r = st.text_input("어근 수정", value=current_df.at[idx, 'root'], key=f"r_{sel_w}")
+                if st.button("💾 수정 완료"):
+                    st.session_state.df.at[idx, 'mean'] = n_m
+                    st.session_state.df.at[idx, 'root'] = n_r
+                    save_data(st.session_state.df); st.success("수정됨!"); st.rerun()
+        else: st.warning("검색 결과가 없습니다.")
+    else: st.info("저장된 단어가 없습니다.")
 
-# --- 메뉴 3: 시험지 만들기 (사용자님 고유 레이아웃 보존) ---
+# --- 메뉴 3: 날짜별 단어 조회 ---
+elif menu == "날짜별 단어 조회":
+    st.header("📅 날짜별 등록 현황")
+    current_df = st.session_state.df
+    if len(current_df) > 0:
+        all_dates = sorted(current_df['date'].unique(), reverse=True)
+        target = st.selectbox("날짜 선택", all_dates)
+        date_df = current_df[current_df['date'] == target]
+        st.subheader(f"📍 {target} 등록 ({len(date_df)}개)")
+        st.table(date_df[['word', 'mean']].sort_values(by="word"))
+    else: st.info("저장된 단어가 없습니다.")
+
+# --- 메뉴 4: 시험지 만들기 (사용자님 50개 레이아웃 보존) ---
 elif menu == "시험지 만들기":
-    st.header("📄 PDF 시험지 생성 (2열 50개 배치)")
-    if len(df) < 5: st.error("단어가 부족합니다.")
+    st.header("🖨️ PDF 시험지 생성")
+    current_df = st.session_state.df
+    if len(current_df) < 5: st.error("단어가 부족합니다.")
     else:
-        t_range = st.radio("범위", ["전체 랜덤", "오늘 등록한 단어만"])
-        candidates = df[df['date'] == datetime.now().strftime("%Y-%m-%d")] if t_range == "오늘 등록한 단어만" else df
-        if candidates.empty: st.warning("단어가 없습니다.")
-        else:
-            num = st.number_input("문제 수", 5, len(candidates), min(20, len(candidates)))
-            if st.button("시험지 PDF 생성"):
-                # 가중치 + 어근 중복 방지
-                candidates = candidates.sort_values('count')
-                sel_words, roots = [], set()
-                for _, r in candidates.iterrows():
-                    if len(sel_words) >= num: break
-                    if r['root'] not in roots: sel_words.append(r); roots.add(r['root'])
-                if len(sel_words) < num:
-                    rem = candidates[~candidates['word'].isin([w['word'] for w in sel_words])]
-                    for _, r in rem.head(num - len(sel_words)).iterrows(): sel_words.append(r)
+        num = st.number_input("문제 개수", 5, len(current_df), min(50, len(current_df)))
+        if st.button("랜덤 시험지 생성"):
+            shuffled = current_df.sample(frac=1).reset_index(drop=True)
+            sel_list, roots = [], set()
+            for _, r in shuffled.iterrows():
+                if len(sel_list) >= num: break
+                if r['root'] not in roots: sel_list.append(r); roots.add(r['root'])
+            
+            buf = io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=A4)
+            width, height = A4
+            
+            def draw_layout(page_words, is_ans, p_num):
+                c.setFont("Malgun", 22)
+                c.drawString(50, height-50, "Vocabulary Test" if not is_ans else "Answer Key")
+                c.setFont("Malgun", 11)
+                c.drawRightString(width-50, height-48, f"Name: ________________  (Page {p_num})")
+                c.line(45, height-62, width-45, height-62)
+                for i, row in enumerate(page_words):
+                    col_x = 50 if i < 25 else 310
+                    row_y = (height-95) - ((i % 25) * 28.5)
+                    txt = f"{i+1+(p_num-1)*50}. {row['word']} : "
+                    c.setFillColorRGB(0,0,0); c.drawString(col_x, row_y, txt)
+                    w_w = c.stringWidth(txt, "Malgun", 11)
+                    if is_ans:
+                        c.setFillColorRGB(0.8,0,0); m_txt = str(row['mean'])
+                        c.setFont("Malgun", 8.5 if c.stringWidth(m_txt, "Malgun", 10) > 230 else 10)
+                        c.drawString(col_x+w_w, row_y, m_txt); c.setFont("Malgun", 11)
+                    else: c.drawString(col_x+w_w, row_y, "____________________")
 
-                buf = io.BytesIO()
-                c = canvas.Canvas(buf, pagesize=A4)
-                
-                def draw_page_layout(word_list, is_answer, page_num):
-                    c.setFont("Malgun", 16)
-                    c.drawCentredString(300, 800, f"영단어 {'정답지' if is_answer else '시험지'} (Page {page_num})")
-                    c.setFont("Malgun", 10)
-                    for i, row in enumerate(word_list):
-                        col = i // 25; row_idx = i % 25
-                        col_x = 70 + (col * 250); row_y = 740 - (row_idx * 27)
-                        word_text = f"{i+1+(page_num-1)*50}. {row['word']}"
-                        c.drawString(col_x, row_y, word_text)
-                        word_w = c.stringWidth(word_text, "Malgun", 10) + 10
-                        if is_answer:
-                            m_txt = str(row['mean'])
-                            if c.stringWidth(m_txt, "Malgun", 10) > 230: c.setFont("Malgun", 8.5)
-                            c.drawString(col_x + word_w, row_y, m_txt); c.setFont("Malgun", 10)
-                        else: c.drawString(col_x + word_w, row_y, "____________________")
-
-                for p in range(0, len(sel_words), 50):
-                    draw_page_layout(sel_words[p:p+50], False, (p//50)+1); c.showPage()
-                for p in range(0, len(sel_words), 50):
-                    draw_page_layout(sel_words[p:p+50], True, (p//50)+1); c.showPage()
-                
-                c.save()
-                for r in sel_words: df.loc[df['word'] == r['word'], 'count'] += 1
-                save_data(df)
-                st.download_button("PDF 다운로드", buf.getvalue(), "voca_test.pdf", "application/pdf")
+            for p in range(0, len(sel_list), 50):
+                draw_layout(sel_list[p:p+50], False, (p//50)+1); c.showPage()
+            for p in range(0, len(sel_list), 50):
+                draw_layout(sel_list[p:p+50], True, (p//50)+1); c.showPage()
+            
+            c.save()
+            for r in sel_list: st.session_state.df.loc[st.session_state.df['word'] == r['word'], 'count'] += 1
+            save_data(st.session_state.df)
+            st.download_button("📥 시험지 다운로드", buf.getvalue(), file_name="test.pdf")
