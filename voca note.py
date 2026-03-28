@@ -23,6 +23,12 @@ except LookupError:
 
 stemmer = PorterStemmer()
 
+# 한국 시간(KST) 설정을 위한 함수
+def get_now_kst():
+    # UTC 기준에 9시간을 더해 한국 시간을 계산합니다.
+    kst = timezone(timedelta(hours=9))
+    return datetime.now(kst)
+
 FONT_PATH = "malgun.ttf" 
 if not os.path.exists(FONT_PATH):
     FONT_PATH = "C:/Windows/Fonts/malgun.ttf"
@@ -56,7 +62,7 @@ def sync_data():
 
 # --- 3. 앱 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
-st.title("📚 실시간 자동 동기화 단어장")
+st.title("토익 단어장")
 
 # 데이터 로드
 worksheet, df_from_sheet = sync_data()
@@ -150,7 +156,7 @@ elif menu == "단어 목록 보기":
                     if st.button("🗑️ 시트에서 삭제"):
                         worksheet.delete_rows(row_idx)
                         st.warning("삭제 완료!"); time.sleep(0.5); st.rerun()
-            except: st.error("시트에서 해당 단어를 찾을 수 없습니다. 새로고침을 눌러주세요.")
+            except: st.error("새로고침을 눌러주세요.")
     else: st.info("데이터가 없습니다.")
 
 # --- 메뉴 3: 날짜별 단어 조회 (PDF 생성 기능 복구) ---
@@ -183,6 +189,7 @@ elif menu == "날짜별 단어 조회":
                         c.drawString(x, y, txt)
                         w_w = c.stringWidth(txt, "Malgun", 10) + 10
                         if is_ans:
+                            c.setFillColorRGB(0.8, 0, 0)
                             m = str(r['mean'])
                             if c.stringWidth(m, "Malgun", 10) > 230: c.setFont("Malgun", 8.5)
                             c.drawString(x + w_w, y, m); c.setFont("Malgun", 10)
