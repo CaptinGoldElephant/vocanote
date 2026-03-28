@@ -117,27 +117,45 @@ if menu == "단어 등록하기":
                     time.sleep(1); st.rerun()
             except Exception as e: st.error(f"오류: {e}")
 
-# --- 메뉴 2: 단어 목록 보기 ---
-elif menu == "단어 목록 보기":
+if menu == "단어 목록 보기":
     st.header("📋 전체 단어 관리 및 검색")
     current_df = st.session_state.df
+    
     if len(current_df) > 0:
+        # 안내 문구 추가
+        st.info("💡 위 표에서 수정하거나 삭제할 단어의 '선택' 칸을 체크해 주세요.")
+        
         search = st.text_input("🔍 검색 (영어)").strip().lower()
         f_df = current_df[current_df['word'].str.contains(search, na=False)].sort_values(by="word")
+        
         if not f_df.empty:
             d_df = f_df.copy(); d_df.insert(0, "선택", False)
             edited = st.data_editor(d_df, hide_index=True, use_container_width=True, key="v_editor")
             s_rows = edited[edited["선택"] == True]
+            
             if not s_rows.empty:
                 sel_w = s_rows.iloc[-1]["word"]
                 idx = current_df[current_df['word'] == sel_w].index[0]
-                c1, c2 = st.columns(2)
-                with c1: n_m = st.text_input("뜻 수정", value=current_df.at[idx, 'mean'], key=f"m_{sel_w}")
-                with c2: n_r = st.text_input("어근 수정", value=current_df.at[idx, 'root'], key=f"r_{sel_w}")
-                if st.button("💾 수정 완료"):
-                    st.session_state.df.at[idx, 'mean'] = n_m
-                    st.session_state.df.at[idx, 'root'] = n_r
-                    save_data(st.session_state.df); st.success("수정됨!"); st.rerun()
+                
+                st.divider()
+                st.subheader(f"⚙️ 단어 수정 및 삭제")
+                
+                c1, c2, c3 = st.columns(3)
+                with c1: n_w = st.text_input("영어 단어 수정", value=current_df.at[idx, 'word'], key=f"w_{idx}")
+                with c2: n_m = st.text_input("한글 뜻 수정", value=current_df.at[idx, 'mean'], key=f"m_{idx}")
+                with c3: n_r = st.text_input("어근 수정", value=current_df.at[idx, 'root'], key=f"r_{idx}")
+                
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button("💾 수정 완료"):
+                        st.session_state.df.at[idx, 'word'] = n_w.strip().lower()
+                        st.session_state.df.at[idx, 'mean'] = n_m.strip()
+                        st.session_state.df.at[idx, 'root'] = n_r.strip()
+                        save_data(st.session_state.df); st.success("수정되었습니다!"); time.sleep(0.5); st.rerun()
+                with b2:
+                    if st.button("🗑️ 단어 삭제"):
+                        st.session_state.df = st.session_state.df.drop(idx)
+                        save_data(st.session_state.df); st.warning("삭제되었습니다!"); time.sleep(0.5); st.rerun()
         else: st.warning("검색 결과가 없습니다.")
     else: st.info("저장된 단어가 없습니다.")
 
