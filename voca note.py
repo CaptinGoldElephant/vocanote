@@ -51,7 +51,7 @@ def save_data(df):
 
 # --- 3. 앱 메인 로직 ---
 st.set_page_config(page_title="나만의 단어장", layout="wide")
-st.title("📚 스마트 토익 단어장")
+st.title("토익 단어장")
 
 df = load_data()
 
