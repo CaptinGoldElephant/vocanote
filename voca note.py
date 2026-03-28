@@ -51,7 +51,7 @@ def save_data(dataframe):
 
 # --- 3. 앱 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
-st.title("📚 스마트 토익 단어장 (실시간 연동형)")
+st.title("토익 단어장")
 
 # [중요] 세션 상태에 데이터 고정 (오류 방지 핵심)
 if 'df' not in st.session_state:
@@ -148,7 +148,7 @@ elif menu == "단어 목록 보기":
                 with c3: n_r = st.text_input("어근 수정", value=current_df.at[idx, 'root'], key=f"r_{idx}")
                 
                 # 3. 버튼 배치 (수정 완료 옆에 바로 삭제 버튼 배치)
-                btn_col = st.columns([1, 1, 4]) # 버튼 두 개를 왼쪽에 모으기 위해 컬럼 비율 조정
+                btn_col = st.columns([1, 4, 1]) # 버튼 두 개를 왼쪽에 모으기 위해 컬럼 비율 조정
                 with btn_col[0]:
                     if st.button("💾 수정 완료", use_container_width=True):
                         st.session_state.df.at[idx, 'word'] = n_w.strip().lower()
