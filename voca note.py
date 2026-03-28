@@ -12,6 +12,9 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from nltk.stem import PorterStemmer
 
+SHEET_ID = "1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8" 
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8/gviz/tq?tqx=out:csv"
+
 # --- 1. 배포 및 실행 환경 준비 ---
 try:
     nltk.data.find('tokenizers/punkt')
@@ -29,33 +32,39 @@ if not os.path.exists(FONT_PATH):
 if os.path.exists(FONT_PATH):
     pdfmetrics.registerFont(TTFont("Malgun", FONT_PATH))
 
-# --- 2. 데이터 관리 함수 ---
 def load_data():
-    if os.path.exists(DB_FILE):
-        try:
-            try:
-                df = pd.read_csv(DB_FILE)
-            except:
-                df = pd.read_csv(DB_FILE, encoding='cp949')
-            
-            if 'date' not in df.columns:
-                df['date'] = datetime.now().strftime("%Y-%m-%d")
-            return df
-        except:
-            return pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
-    else:
+    try:
+        # 1순위: 구글 시트에서 읽어오기
+        df = pd.read_csv(SHEET_URL)
+        return df
+    except:
+        # 2순위: 구글 시트 실패 시 로컬 CSV 또는 빈 데이터
+        if os.path.exists(DB_FILE):
+            return pd.read_csv(DB_FILE)
         return pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
 
 def save_data(df):
+    # 로컬 서버에 임시 저장 (백업용)
     df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
+    st.info("💡 팁: 구글 시트 자동 저장은 현재 읽기 전용으로 설정되었습니다. 직접 시트에 입력하거나 아래 백업 버튼을 활용하세요.")
 
-# --- 3. 앱 메인 로직 ---
-st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
-st.title("📚 스마트 토익 단어장")
+# --- 앱 메인 ---
+st.set_page_config(page_title="토익 단어장", layout="wide")
+st.title("토익 단어장")
 
 df = load_data()
 
-menu = st.sidebar.selectbox("메뉴를 선택하세요", ["단어 등록하기", "단어 목록 보기", "시험지 만들기"])
+# 사이드바 메뉴 및 백업 버튼 (방법 1)
+st.sidebar.header("💾 데이터 관리")
+csv_data = df.to_csv(index=False, encoding="utf-8-sig")
+st.sidebar.download_button(
+    label="내 컴퓨터로 전체 백업 (CSV)",
+    data=csv_data,
+    file_name=f"voca_backup_{datetime.now().strftime('%Y%m%d')}.csv",
+    mime="text/csv"
+)
+
+menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "시험지 만들기"])
 
 # --- 메뉴 1: 단어 등록하기 ---
 if menu == "단어 등록하기":
