@@ -117,12 +117,13 @@ if menu == "단어 등록하기":
                     time.sleep(1); st.rerun()
             except Exception as e: st.error(f"오류: {e}")
 
-if menu == "단어 목록 보기":
+ # --- 메뉴 2: 단어 목록 보기 (버튼 위치 조정 및 영어 수정 추가) ---
+elif menu == "단어 목록 보기":
     st.header("📋 전체 단어 관리 및 검색")
     current_df = st.session_state.df
     
     if len(current_df) > 0:
-        # 안내 문구 추가
+        # 1. 안내 문구 (상단 고정)
         st.info("💡 위 표에서 수정하거나 삭제할 단어의 '선택' 칸을 체크해 주세요.")
         
         search = st.text_input("🔍 검색 (영어)").strip().lower()
@@ -140,24 +141,35 @@ if menu == "단어 목록 보기":
                 st.divider()
                 st.subheader(f"⚙️ 단어 수정 및 삭제")
                 
+                # 2. 수정 입력 칸 (영어 단어 포함 3열 배치)
                 c1, c2, c3 = st.columns(3)
                 with c1: n_w = st.text_input("영어 단어 수정", value=current_df.at[idx, 'word'], key=f"w_{idx}")
                 with c2: n_m = st.text_input("한글 뜻 수정", value=current_df.at[idx, 'mean'], key=f"m_{idx}")
                 with c3: n_r = st.text_input("어근 수정", value=current_df.at[idx, 'root'], key=f"r_{idx}")
                 
-                b1, b2 = st.columns(2)
-                with b1:
-                    if st.button("💾 수정 완료"):
+                # 3. 버튼 배치 (수정 완료 옆에 바로 삭제 버튼 배치)
+                btn_col = st.columns([1, 1, 4]) # 버튼 두 개를 왼쪽에 모으기 위해 컬럼 비율 조정
+                with btn_col[0]:
+                    if st.button("💾 수정 완료", use_container_width=True):
                         st.session_state.df.at[idx, 'word'] = n_w.strip().lower()
                         st.session_state.df.at[idx, 'mean'] = n_m.strip()
                         st.session_state.df.at[idx, 'root'] = n_r.strip()
-                        save_data(st.session_state.df); st.success("수정되었습니다!"); time.sleep(0.5); st.rerun()
-                with b2:
-                    if st.button("🗑️ 단어 삭제"):
+                        save_data(st.session_state.df)
+                        st.success("수정 완료!")
+                        time.sleep(0.5)
+                        st.rerun()
+                with btn_col[1]:
+                    if st.button("🗑️ 단어 삭제", use_container_width=True):
                         st.session_state.df = st.session_state.df.drop(idx)
-                        save_data(st.session_state.df); st.warning("삭제되었습니다!"); time.sleep(0.5); st.rerun()
-        else: st.warning("검색 결과가 없습니다.")
-    else: st.info("저장된 단어가 없습니다.")
+                        save_data(st.session_state.df)
+                        st.warning("삭제 완료!")
+                        time.sleep(0.5)
+                        st.rerun()
+        else:
+            st.warning("검색 결과가 없습니다.")
+    else:
+        st.info("저장된 단어가 없습니다.")
+
 
 # --- 메뉴 3: 날짜별 단어 조회 ---
 elif menu == "날짜별 단어 조회":
