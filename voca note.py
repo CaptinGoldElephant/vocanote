@@ -15,7 +15,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from nltk.stem import PorterStemmer
 
-# --- 1. 환경 준비 ---
+# 1. 환경 및 시간설정
 try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
@@ -23,9 +23,8 @@ except LookupError:
 
 stemmer = PorterStemmer()
 
-# [수정] 한국 시간(KST)을 아주 정확하게 가져오는 함수
+
 def get_today_kst():
-    # UTC+9 시간을 강제로 설정합니다.
     kst = timezone(timedelta(hours=9))
     return datetime.now(kst).strftime("%Y-%m-%d")
 
@@ -35,7 +34,7 @@ if not os.path.exists(FONT_PATH):
 if os.path.exists(FONT_PATH):
     pdfmetrics.registerFont(TTFont("Malgun", FONT_PATH))
 
-# --- 2. 구글 시트 연결 ---
+# --- 2. 구글 시트 연결 및 동기 ---
 def get_gspread_client():
     key_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
     creds = Credentials.from_service_account_info(
@@ -56,18 +55,95 @@ def sync_data():
         st.error(f"연결 실패: {e}")
         return None, pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
 
-# --- 3. 메인 로직 ---
+# 시험지 생성용 단어 추출 로직 (가중치 + 어근 중복 방지) ---
+def select_test_words(df, num):
+    # 1. 가중치 적용: 출제 횟수(count)가 적은 순서대로 정렬
+    df_sorted = df.sort_values(by='count')
+    
+    selected_list = []
+    used_roots = set()
+    
+    # 2. 어근 중복 방지 로직 실행
+    # 출제 횟수가 적은 후보군 중에서 어근이 겹치지 않는 단어를 먼저 선점
+    for _, row in df_sorted.iterrows():
+        if len(selected_list) >= num:
+            break
+        
+        # 어근이 아직 사용되지 않았거나, 전체 단어 수가 부족해 어쩔 수 없는 경우 제외
+        if row['root'] not in used_roots:
+            selected_list.append(row)
+            used_roots.add(row['root'])
+            
+    # 3. 만약 어근을 다 따졌는데 문제 수가 부족하면, 어근이 겹치더라도 추가로 채움
+    if len(selected_list) < num:
+        remaining = df_sorted[~df_sorted['word'].isin([w['word'] for w in selected_list])]
+        needed = num - len(selected_list)
+        additional = remaining.head(needed)
+        for _, row in additional.iterrows():
+            selected_list.append(row)
+            
+    return selected_list
+
+
+# --- 3. 공통 PDF 생성 함수 (색상 및 레이아웃 수정) ---
+def generate_pdf(selected_words, title_prefix):
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    
+    def draw_layout(words, is_ans, p_num):
+        c.setFont("Malgun", 16)
+        c.setFillColorRGB(0, 0, 0) # 타이틀은 검정색
+        c.drawCentredString(300, 800, f"{title_prefix} {'정답지' if is_ans else '시험지'} (P.{p_num})")
+        c.setFont("Malgun", 10)
+        
+        for i, r in enumerate(words):
+            col = i // 25; row_i = i % 25
+            x = 70 + (col * 250); y = 740 - (row_i * 27)
+            
+            num_txt = f"{i+1+(p_num-1)*50}. "
+            word_txt = f"{r['word']} : "
+            
+            # 1. 번호와 영어 단어는 항상 검정색 (is_ans 여부와 상관없이 초기화)
+            c.setFillColorRGB(0, 0, 0)
+            c.drawString(x, y, num_txt)
+            word_x = x + c.stringWidth(num_txt, "Malgun", 10)
+            c.drawString(word_x, y, word_txt)
+            
+            mean_x = word_x + c.stringWidth(word_txt, "Malgun", 10)
+            
+            if is_ans:
+                # 2. 정답지에서 한글 뜻만 빨간색으로 변경
+                c.setFillColorRGB(0.8, 0, 0) 
+                m = str(r['mean'])
+                if c.stringWidth(m, "Malgun", 10) > 150: c.setFont("Malgun", 8.5)
+                c.drawString(mean_x, y, m)
+                c.setFont("Malgun", 10)
+            else:
+                c.setFillColorRGB(0, 0, 0)
+                c.drawString(mean_x, y, "____________________")
+
+    # 50개 단위 페이지 생성
+    for p in range(0, len(selected_words), 50):
+        draw_layout(selected_words[p:p+50], False, (p//50)+1); c.showPage()
+    for p in range(0, len(selected_words), 50):
+        draw_layout(selected_words[p:p+50], True, (p//50)+1); c.showPage()
+    c.save()
+    return buf
+
+
+# --- 4. 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
 st.title("📚 실시간 자동 동기화 단어장")
 
 worksheet, df_sheet = sync_data()
 
-# 세션 상태에 최신 데이터 유지
-if 'df' not in st.session_state or st.sidebar.button("🔄 새로고침"):
+if 'df' not in st.session_state or st.sidebar.button("🔄 데이터 새로고침"):
     st.session_state.df = df_sheet
 
 menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기"])
 
+
+# 메뉴 1 : 단어 등록하기 화면
 if menu == "단어 등록하기":
     st.header("📝 새 단어 등록")
     tab1, tab2 = st.tabs(["직접 입력", "CSV 파일 업로드"])
@@ -122,7 +198,7 @@ if menu == "단어 등록하기":
             except Exception as e:
                 st.error(f"오류: {e}")
 
-# --- 메뉴 2: 단어 목록 보기 (수정/삭제/안내문구/스펠링수정 포함) ---
+# --- 메뉴 2 : 단어 목록 보기 (수정/삭제/안내문구/스펠링수정 포함) ---
 elif menu == "단어 목록 보기":
     st.header("📋 전체 단어 관리 및 검색")
     st.info("💡 위 표에서 수정하거나 삭제할 단어의 '선택' 칸을 체크해 주세요.")
@@ -164,85 +240,38 @@ elif menu == "단어 목록 보기":
 # --- 메뉴 3: 날짜별 단어 조회 (PDF 생성 기능 복구) ---
 elif menu == "날짜별 단어 조회":
     st.header("📅 날짜별 등록 현황")
-    curr_df = st.session_state.df
-    if not curr_df.empty:
-        all_dates = sorted(curr_df['date'].unique(), reverse=True)
-        target = st.selectbox("조회할 날짜를 선택하세요", all_dates)
+    if not st.session_state.df.empty:
+        target = st.selectbox("날짜 선택", sorted(st.session_state.df['date'].unique(), reverse=True))
+        date_df = st.session_state.df[st.session_state.df['date'] == target].sort_values("word")
         
-        date_df = curr_df[curr_df['date'] == target].sort_values("word")
-        st.subheader(f"📍 {target} 등록 단어 ({len(date_df)}개)")
-        
-        # 해당 날짜 시험지 만들기 버튼
-        if st.button(f"📄 {target} 단어 시험지(PDF) 생성"):
-            if len(date_df) > 0:
-                sel_words = date_df.to_dict('records')
-                buf = io.BytesIO()
-                c = canvas.Canvas(buf, pagesize=A4)
-                
-                # 사용자님 고유 50개 2열 레이아웃 함수
-                def draw_layout(words, is_ans, p_num):
-                    c.setFont("Malgun", 16)
-                    c.drawCentredString(300, 800, f"{target} 영단어 {'정답지' if is_ans else '시험지'} (P.{p_num})")
-                    c.setFont("Malgun", 10)
-                    for i, r in enumerate(words):
-                        col = i // 25; row_i = i % 25
-                        x = 70 + (col * 250); y = 740 - (row_i * 27)
-                        txt = f"{i+1+(p_num-1)*50}. {r['word']}"
-                        c.drawString(x, y, txt)
-                        w_w = c.stringWidth(txt, "Malgun", 10) + 10
-                        if is_ans:
-                            c.setFillColorRGB(0.8, 0, 0)
-                            m = str(r['mean'])
-                            if c.stringWidth(m, "Malgun", 10) > 230: c.setFont("Malgun", 8.5)
-                            c.drawString(x + w_w, y, m); c.setFont("Malgun", 10)
-                        else:
-                            c.drawString(x + w_w, y, "____________________")
-
-                # PDF 페이지 생성
-                for p in range(0, len(sel_words), 50):
-                    draw_layout(sel_words[p:p+50], False, (p//50)+1); c.showPage()
-                for p in range(0, len(sel_words), 50):
-                    draw_layout(sel_words[p:p+50], True, (p//50)+1); c.showPage()
-                c.save()
-                st.download_button(f"📥 {target} PDF 다운로드", buf.getvalue(), f"voca_{target}.pdf")
-            else:
-                st.warning("해당 날짜에 단어가 없습니다.")
-        
-        st.divider()
+        if st.button(f"📄 {target} 시험지 생성"):
+            pdf_buf = generate_pdf(date_df.to_dict('records'), target)
+            st.download_button(f"📥 {target} PDF 다운로드", pdf_buf.getvalue(), f"voca_{target}.pdf")
         st.table(date_df[['word', 'mean']])
-    else:
-        st.info("저장된 단어가 없습니다.")
 
-# --- 메뉴 4: 시험지 만들기 (사용자님 50개 2열 디자인 완벽 보존) ---
+
+# --- [메뉴 4: 시험지 만들기] 섹션에 적용 ---
 elif menu == "시험지 만들기":
-    st.header("🖨️ PDF 시험지 생성")
+    st.header("🖨️ 랜덤 시험지 생성")
     curr_df = st.session_state.df
-    if len(curr_df) < 5: st.error("단어가 부족합니다.")
+    if len(curr_df) < 5:
+        st.error("단어가 부족합니다.")
     else:
         num = st.number_input("문제 수", 5, len(curr_df), min(20, len(curr_df)))
-        if st.button("PDF 생성"):
-            sel_list = curr_df.sample(n=num).to_dict('records')
-            buf = io.BytesIO()
-            c = canvas.Canvas(buf, pagesize=A4)
-            def draw_layout(words, is_ans, p_num):
-                c.setFont("Malgun", 16)
-                c.drawCentredString(300, 800, f"영단어 {'정답지' if is_ans else '시험지'} (Page {p_num})")
-                c.setFont("Malgun", 10)
-                for i, r in enumerate(words):
-                    col = i // 25; row_i = i % 25
-                    x = 70 + (col * 250); y = 740 - (row_i * 27)
-                    txt = f"{i+1+(p_num-1)*50}. {r['word']}"
-                    c.drawString(x, y, txt)
-                    w_w = c.stringWidth(txt, "Malgun", 10) + 10
-                    if is_ans:
-                        m = str(r['mean'])
-                        if c.stringWidth(m, "Malgun", 10) > 230: c.setFont("Malgun", 8.5)
-                        c.drawString(x + w_w, y, m); c.setFont("Malgun", 10)
-                    else: c.drawString(x + w_w, y, "____________________")
+        if st.button("시험지 생성 및 카운트 업데이트"):
+            # 위에서 정의한 로직으로 단어 선택 (가중치 + 어근 필터)
+            selected = select_test_words(curr_df, num)
             
-            for p in range(0, len(sel_list), 50):
-                draw_layout(sel_list[p:p+50], False, (p//50)+1); c.showPage()
-            for p in range(0, len(sel_list), 50):
-                draw_layout(sel_list[p:p+50], True, (p//50)+1); c.showPage()
-            c.save()
-            st.download_button("📥 다운로드", buf.getvalue(), "voca.pdf")
+            # PDF 생성 (색상 오류 해결된 버전)
+            pdf_buf = generate_pdf(selected, "랜덤")
+            
+            # 구글 시트 출제 카운트 업데이트
+            with st.spinner("출제 카운트 업데이트 중..."):
+                for item in selected:
+                    cell = worksheet.find(item['word'])
+                    # D열(count) 값 업데이트
+                    curr_val = int(worksheet.cell(cell.row, 4).value or 0)
+                    worksheet.update_cell(cell.row, 4, curr_val + 1)
+            
+            st.success("✅ 출제 카운트 반영 및 어근 필터링 완료!")
+            st.download_button("📥 PDF 다운로드", pdf_buf.getvalue(), "voca_test.pdf")
