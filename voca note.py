@@ -8,14 +8,14 @@ import time
 import nltk
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from nltk.stem import PorterStemmer
 
-# --- 1. 환경 및 폰트 준비 ---
+# --- 1. 환경 준비 ---
 try:
     nltk.data.find('tokenizers/punkt')
 except LookupError:
@@ -23,11 +23,11 @@ except LookupError:
 
 stemmer = PorterStemmer()
 
-# 한국 시간(KST) 설정을 위한 함수
-def get_now_kst():
-    # UTC 기준에 9시간을 더해 한국 시간을 계산합니다.
+# [수정] 한국 시간(KST)을 아주 정확하게 가져오는 함수
+def get_today_kst():
+    # UTC+9 시간을 강제로 설정합니다.
     kst = timezone(timedelta(hours=9))
-    return datetime.now(kst)
+    return datetime.now(kst).strftime("%Y-%m-%d")
 
 FONT_PATH = "malgun.ttf" 
 if not os.path.exists(FONT_PATH):
@@ -35,7 +35,7 @@ if not os.path.exists(FONT_PATH):
 if os.path.exists(FONT_PATH):
     pdfmetrics.registerFont(TTFont("Malgun", FONT_PATH))
 
-# --- 2. 🔐 구글 시트 연결 함수 ---
+# --- 2. 구글 시트 연결 ---
 def get_gspread_client():
     key_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
     creds = Credentials.from_service_account_info(
@@ -47,33 +47,27 @@ def get_gspread_client():
 def sync_data():
     try:
         client = get_gspread_client()
-        # 사용자님 시트 ID
         sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
         worksheet = sh.get_worksheet(0)
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-        # 필수 컬럼 보장
-        for col in ["word", "mean", "root", "count", "date"]:
-            if col not in df.columns: df[col] = ""
         return worksheet, df
     except Exception as e:
         st.error(f"연결 실패: {e}")
         return None, pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
 
-# --- 3. 앱 메인 로직 ---
+# --- 3. 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
-st.title("토익 단어장")
+st.title("📚 실시간 자동 동기화 단어장")
 
-# 데이터 로드
-worksheet, df_from_sheet = sync_data()
+worksheet, df_sheet = sync_data()
 
-# 세션 상태 유지 (강제 새로고침 버튼 추가)
-if 'df' not in st.session_state or st.sidebar.button("🔄 시트 데이터 새로고침"):
-    st.session_state.df = df_from_sheet
+# 세션 상태에 최신 데이터 유지
+if 'df' not in st.session_state or st.sidebar.button("🔄 새로고침"):
+    st.session_state.df = df_sheet
 
 menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기"])
 
-# --- 메뉴 1: 단어 등록하기 ---
 if menu == "단어 등록하기":
     st.header("📝 새 단어 등록")
     tab1, tab2 = st.tabs(["직접 입력", "CSV 파일 업로드"])
@@ -82,43 +76,51 @@ if menu == "단어 등록하기":
         with st.form("single_add", clear_on_submit=True):
             word = st.text_input("영어 단어").strip().lower()
             mean = st.text_input("한글 뜻").strip()
-            if st.form_submit_button("시트에 저장") and word and mean:
-                root = stemmer.stem(word)
-                today = datetime.now().strftime("%Y-%m-%d")
-                worksheet.append_row([word, mean, root, 0, today])
-                st.success(f"'{word}' 저장 완료!")
-                time.sleep(1); st.rerun()
+            if st.form_submit_button("시트에 저장"):
+                if word and mean:
+                    # [수정] 중복 체크 로직 추가
+                    existing_words = st.session_state.df['word'].tolist()
+                    if word in existing_words:
+                        st.error(f"⚠️ '{word}'는 이미 등록된 단어입니다!")
+                    else:
+                        root = stemmer.stem(word)
+                        # [수정] 한국 날짜 강제 적용
+                        today = get_today_kst()
+                        worksheet.append_row([word, mean, root, 0, today])
+                        st.success(f"✅ '{word}' 저장 완료! (날짜: {today})")
+                        time.sleep(1)
+                        st.rerun()
 
     with tab2:
-        st.info("💡 CSV를 올리면 구글 시트에 자동으로 모든 단어가 추가됩니다.")
         uploaded_file = st.file_uploader("CSV 선택", type=["csv"])
-        if uploaded_file:
+        if uploaded_file and st.button("🚀 구글 시트로 일괄 전송"):
             try:
                 try: user_csv = pd.read_csv(uploaded_file)
                 except:
                     uploaded_file.seek(0)
                     user_csv = pd.read_csv(uploaded_file, encoding='cp949')
                 
-                st.write("파일 미리보기")
-                st.dataframe(user_csv.head())
-                cols = user_csv.columns.tolist()
-                w_col = st.selectbox("단어 열", cols); m_col = st.selectbox("뜻 열", cols)
+                today = get_today_kst()
+                existing_words = st.session_state.df['word'].tolist()
+                new_rows = []
                 
-                if st.button("🚀 구글 시트로 일괄 전송"):
-                    with st.spinner("시트에 쓰는 중..."):
-                        new_rows = []
-                        today = datetime.now().strftime("%Y-%m-%d")
-                        for _, row in user_csv.iterrows():
-                            w = str(row[w_col]).strip().lower()
-                            m = str(row[m_col]).strip()
-                            r = stemmer.stem(w)
-                            new_rows.append([w, m, r, 0, today])
-                        
-                        # [핵심] 실제로 시트에 데이터를 한꺼번에 쓰는 부분
-                        worksheet.append_rows(new_rows)
-                        st.success(f"{len(new_rows)}개의 단어가 구글 시트에 일괄 저장되었습니다!")
-                        time.sleep(1); st.rerun()
-            except Exception as e: st.error(f"오류: {e}")
+                for _, row in user_csv.iterrows():
+                    w = str(row.iloc[0]).strip().lower() # 첫번째 열 기준
+                    m = str(row.iloc[1]).strip()         # 두번째 열 기준
+                    if w not in existing_words:
+                        r = stemmer.stem(w)
+                        new_rows.append([w, m, r, 0, today])
+                        existing_words.append(w) # 루프 내 중복 방지
+                
+                if new_rows:
+                    worksheet.append_rows(new_rows)
+                    st.success(f"✅ {len(new_rows)}개의 새 단어가 저장되었습니다!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("추가할 새로운 단어가 없습니다.")
+            except Exception as e:
+                st.error(f"오류: {e}")
 
 # --- 메뉴 2: 단어 목록 보기 (수정/삭제/안내문구/스펠링수정 포함) ---
 elif menu == "단어 목록 보기":
