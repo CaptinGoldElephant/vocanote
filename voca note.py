@@ -210,7 +210,7 @@ elif menu == "날짜별 단어 조회":
         
         col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button(f"📄 {target} 랜덤 시험지 생성"):
+            if st.button(f"📄 {target} 시험지 생성"):
                 # --- 핵심 수정 부분: 데이터를 무작위로 섞음 ---
                 # .sample(frac=1)은 전체 데이터를 100% 비율로 무작위 샘플링(셔플)한다는 뜻입니다.
                 shuffled_df = date_df.sample(frac=1).reset_index(drop=True)
