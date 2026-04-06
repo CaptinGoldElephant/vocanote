@@ -202,12 +202,29 @@ elif menu == "단어 목록 보기":
 elif menu == "날짜별 단어 조회":
     st.header("📅 날짜별 등록 현황")
     if not df_main.empty:
+        # 1. 날짜 선택 UI
         target = st.selectbox("날짜 선택", sorted(df_main['date'].astype(str).unique(), reverse=True))
-        date_df = df_main[df_main['date'].astype(str) == target].sort_values("word")
-        if st.button(f"📄 {target} 시험지 생성"):
-            pdf_buf = generate_pdf(date_df.to_dict('records'), target)
-            st.download_button(f"📥 PDF 다운로드", pdf_buf.getvalue(), f"voca_{target}.pdf")
-        st.table(date_df[['word', 'mean']])
+        
+        # 2. 해당 날짜 데이터 필터링
+        date_df = df_main[df_main['date'].astype(str) == target].copy()
+        
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button(f"📄 {target} 랜덤 시험지 생성"):
+                # --- 핵심 수정 부분: 데이터를 무작위로 섞음 ---
+                # .sample(frac=1)은 전체 데이터를 100% 비율로 무작위 샘플링(셔플)한다는 뜻입니다.
+                shuffled_df = date_df.sample(frac=1).reset_index(drop=True)
+                
+                pdf_buf = generate_pdf(shuffled_df.to_dict('records'), target)
+                st.download_button(
+                    label=f"📥 PDF 다운로드",
+                    data=pdf_buf.getvalue(),
+                    file_name=f"voca_{target}_random.pdf",
+                    mime="application/pdf"
+                )
+        
+        # 3. 화면 표시용 테이블은 가독성을 위해 정렬해서 보여줌
+        st.table(date_df.sort_values("word")[['word', 'mean']])
 
 elif menu == "시험지 만들기":
     st.header("🖨️ 랜덤 시험지 생성")
