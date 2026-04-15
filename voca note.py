@@ -285,6 +285,85 @@ elif menu == "오답 체크하기":
                         st.success(f"✅ {len(wrong_words)}개 반영 완료!"); time.sleep(1); st.rerun()
     except Exception as e: st.error(f"오류: {e}")
 
+
+
+elif menu == "날짜별 오답 조회":
+    st.header("📅 날짜별 오답 모아보기")
+    st.write("선택한 날짜의 시험에서 틀렸던 단어들을 한눈에 확인하고 시험지를 만듭니다.")
+
+    try:
+        # 1. 히스토리 데이터 확보
+        client = get_gspread_client()
+        sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
+        history_ws = sh.worksheet("Last_Test")
+        history_data = history_ws.get_all_records()
+
+        if not history_data:
+            st.warning("기록된 시험 히스토리가 없습니다.")
+        else:
+            history_df = pd.DataFrame(history_data)
+            # 날짜만 추출 (yyyy-mm-dd)
+            history_df['only_date'] = history_df['date'].str.split(' ').str[0]
+            available_dates = sorted(history_df['only_date'].unique(), reverse=True)
+
+            # 2. 날짜 선택
+            target_date = st.selectbox("날짜 선택", available_dates)
+
+            # 3. 해당 날짜의 모든 시험 단어 합치기
+            daily_tests = history_df[history_df['only_date'] == target_date]
+            all_words_that_day = []
+            for _, row in daily_tests.iterrows():
+                all_words_that_day.extend(row['words'].split(","))
+            
+            # 중복 제거 (그날 여러 시험에 나온 단어 대비)
+            all_words_that_day = list(set(all_words_that_day))
+
+            # 4. 메인 데이터에서 해당 단어들 중 '현재 오답인 것'만 필터링
+            # 즉, 그날 시험 친 단어들 중 wrong_count > 0 인 것들
+            wrong_results = df_main[
+                (df_main['word'].isin(all_words_that_day)) & 
+                (df_main['wrong_count'].astype(int) > 0)
+            ].copy()
+
+            if wrong_results.empty:
+                st.info(f"✨ {target_date}에는 모든 문제를 맞히셨거나 기록된 오답이 없습니다!")
+            else:
+                st.success(f"📍 {target_date}에 발생한 오답: {len(wrong_results)}개")
+                
+                # 단어 목록 보기 느낌의 테이블 (정렬: 많이 틀린 순)
+                display_df = wrong_results.sort_values("wrong_count", ascending=False)[['word', 'mean', 'wrong_count']]
+                st.table(display_df)
+
+                st.divider()
+                
+                # 5. 섞어서 시험지 만들기
+                st.subheader("🔄 이 오답들로만 랜덤 시험지 만들기")
+                if st.button(f"📄 {target_date} 오답 랜덤 시험지 생성"):
+                    # 무작위 셔플
+                    shuffled_wrong = wrong_results.sample(frac=1).reset_index(drop=True)
+                    selected_dicts = shuffled_wrong.to_dict('records')
+                    
+                    # ID 생성 (RE-날짜 형식)
+                    now = datetime.now(timezone(timedelta(hours=9)))
+                    test_id = f"RE-{target_date.replace('-', '')}-{now.strftime('%H%M')}"
+                    
+                    # PDF 생성
+                    pdf_buf = generate_pdf(selected_dicts, f"{target_date} 복습", test_id)
+                    
+                    # 다시 히스토리에 저장 (이 시험지도 나중에 채점 가능하도록)
+                    save_test_history(selected_dicts, test_id)
+                    
+                    st.download_button(
+                        label="📥 복습 시험지 PDF 다운로드",
+                        data=pdf_buf.getvalue(),
+                        file_name=f"review_{target_date}.pdf",
+                        mime="application/pdf"
+                    )
+
+    except Exception as e:
+        st.error(f"오류 발생: {e}")
+
+
 elif menu == "지옥의 오답 노트":
     st.header("🔥 지옥의 오답 노트")
     threshold = st.number_input("최소 오답 횟수", min_value=1, value=3, step=1)
