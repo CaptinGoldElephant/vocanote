@@ -76,7 +76,7 @@ def select_test_words(df, num):
             selected_list.append(row)
     return selected_list
 
-def generate_pdf(selected_words, title_prefix):
+def generate_pdf(selected_words, title_prefix, test_id):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     
@@ -232,8 +232,17 @@ elif menu == "날짜별 단어 조회":
         with col1:
             if st.button(f"📄 {target} 시험지 생성"):
                 # --- 핵심 수정 부분: 데이터를 무작위로 섞음 ---
-                # .sample(frac=1)은 전체 데이터를 100% 비율로 무작위 샘플링(셔플)한다는 뜻입니다.
                 shuffled_df = date_df.sample(frac=1).reset_index(drop=True)
+
+                # ID 생성 (날짜-조회단어날짜 형식)
+                now = datetime.now(timezone(timedelta(hours=9)))
+                test_id = f"{now.strftime('%y%m%d')}-{target.replace('-', '')}"
+    
+                selected_dicts = shuffled_df.to_dict('records')
+                pdf_buf = generate_pdf(selected_dicts, target, test_id)
+    
+                # 순서 저장
+                save_test_history(selected_dicts, test_id)
                 
                 pdf_buf = generate_pdf(shuffled_df.to_dict('records'), target)
                 st.download_button(
@@ -253,6 +262,17 @@ elif menu == "시험지 만들기":
         num = st.number_input("문제 수", 5, len(df_main), 20)
         if st.button("시험지 생성 및 카운트 업데이트"):
             selected = select_test_words(df_main, num)
+
+            # --- [추가] 고유 시험지 ID 생성 (날짜시간 기반) ---
+            now = datetime.now(timezone(timedelta(hours=9)))
+            test_id = now.strftime("%y%m%d-%H%M") 
+            
+            # PDF 생성 시 ID 전달
+            pdf_buf = generate_pdf(selected, "랜덤", test_id)
+            
+            # 시트에 시험지 순서 저장
+            save_test_history(selected, test_id)
+            
             pdf_buf = generate_pdf(selected, "랜덤")
             
             # [수정] 효율적인 카운트 업데이트 (Batch Update 방식)
