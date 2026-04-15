@@ -50,8 +50,8 @@ def sync_data():
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         # 컬럼 누락 방지
-        for col in ["word", "mean", "root", "count", "date"]:
-            if col not in df.columns: df[col] = 0 if col == "count" else ""
+        for col in ["word", "mean", "root", "count", "wrong_count", "date"]:
+            if col not in df.columns: df[col] = 0 if col in ["count", "wrong_count"] else ""
         return worksheet, df
     except Exception as e:
         st.error(f"연결 실패: {e}")
@@ -85,6 +85,9 @@ def generate_pdf(selected_words, title_prefix):
         c.setFillColorRGB(0, 0, 0)
         c.drawCentredString(300, 800, f"{title_prefix} {'정답지' if is_ans else '시험지'} (P.{p_num})")
         c.setFont("Malgun", 10)
+        c.setFont("Malgun", 8)
+        c.setFillColorRGB(0.5, 0.5, 0.5) # 회색으로 작게
+        c.drawString(500, 20, f"ID: {test_id}") # 페이지 우측 하단
         
         for i, r in enumerate(words):
             col = i // 25; row_i = i % 25
@@ -114,6 +117,23 @@ def generate_pdf(selected_words, title_prefix):
         draw_layout(selected_words[p:p+50], True, (p//50)+1); c.showPage()
     c.save()
     return buf
+
+def save_test_history(selected_words, test_id):
+    try:
+        client = get_gspread_client()
+        sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
+        # Last_Test 시트 선택 (없으면 에러나니 확인 부탁드려요!)
+        history_ws = sh.worksheet("Last_Test") 
+        
+        # 기존 기록 유지하면서 맨 위에 추가 (최신순)
+        # 구성: [시험지ID, 생성시간, 단어들(쉼표구분)]
+        words_str = ",".join([w['word'] for w in selected_words])
+        now_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+        
+        history_ws.insert_row([test_id, now_str, words_str], 2) # 헤더 바로 아래 삽입
+    except Exception as e:
+        st.error(f"히스토리 저장 실패: {e}")
+
 
 # --- 4. 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
