@@ -139,7 +139,7 @@ if 'worksheet' not in st.session_state or 'df' not in st.session_state or st.sid
 worksheet = st.session_state.worksheet
 df_main = st.session_state.df
 
-menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기", "오답 체크하기", "지옥의 오답 노트"])
+menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기", "오답 체크하기", "날짜별 오답 조회", "지옥의 오답 노트"])
 
 if menu == "단어 등록하기":
     st.header("📝 새 단어 등록")
