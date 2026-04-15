@@ -49,16 +49,19 @@ def sync_data():
         worksheet = sh.get_worksheet(0)
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-        # 컬럼 누락 방지
         for col in ["word", "mean", "root", "count", "wrong_count", "date"]:
-            if col not in df.columns: df[col] = 0 if col in ["count", "wrong_count"] else ""
+            if col not in df.columns: 
+                df[col] = 0 if col in ["count", "wrong_count"] else ""
         return worksheet, df
     except Exception as e:
         st.error(f"연결 실패: {e}")
-        return None, pd.DataFrame(columns=["word", "mean", "root", "count", "date"])
+        return None, pd.DataFrame(columns=["word", "mean", "root", "count", "wrong_count", "date"])
 
 def select_test_words(df, num):
-    df_sorted = df.sort_values(by='count')
+    # 가중치 계산: 오답 횟수는 높이고, 노출 횟수는 낮춰서 취약 단어 우선 추출
+    df['score'] = (df['wrong_count'].astype(int) * 2) - (df['count'].astype(int) * 0.5)
+    df_sorted = df.sort_values(by='score', ascending=False)
+    
     selected_list = []
     used_roots = set()
     
@@ -82,13 +85,12 @@ def generate_pdf(selected_words, title_prefix, test_id):
     
     def draw_layout(words, is_ans, p_num):
         c.setFont("Malgun", 16)
-        c.setFillColorRGB(0, 0, 0)
         c.drawCentredString(300, 800, f"{title_prefix} {'정답지' if is_ans else '시험지'} (P.{p_num})")
-        c.setFont("Malgun", 10)
         c.setFont("Malgun", 8)
-        c.setFillColorRGB(0.5, 0.5, 0.5) # 회색으로 작게
-        c.drawString(500, 20, f"ID: {test_id}") # 페이지 우측 하단
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.drawString(500, 20, f"ID: {test_id}")
         
+        c.setFont("Malgun", 10)
         for i, r in enumerate(words):
             col = i // 25; row_i = i % 25
             x = 70 + (col * 250); y = 740 - (row_i * 27)
@@ -103,12 +105,8 @@ def generate_pdf(selected_words, title_prefix, test_id):
             
             if is_ans:
                 c.setFillColorRGB(0.8, 0, 0) 
-                m = str(r['mean'])
-                if c.stringWidth(m, "Malgun", 10) > 150: c.setFont("Malgun", 8.5)
-                c.drawString(mean_x, y, m)
-                c.setFont("Malgun", 10)
+                c.drawString(mean_x, y, str(r['mean']))
             else:
-                c.setFillColorRGB(0, 0, 0)
                 c.drawString(mean_x, y, "____________________")
 
     for p in range(0, len(selected_words), 50):
@@ -122,18 +120,12 @@ def save_test_history(selected_words, test_id):
     try:
         client = get_gspread_client()
         sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
-        # Last_Test 시트 선택 (없으면 에러나니 확인 부탁드려요!)
         history_ws = sh.worksheet("Last_Test") 
-        
-        # 기존 기록 유지하면서 맨 위에 추가 (최신순)
-        # 구성: [시험지ID, 생성시간, 단어들(쉼표구분)]
         words_str = ",".join([w['word'] for w in selected_words])
         now_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
-        
-        history_ws.insert_row([test_id, now_str, words_str], 2) # 헤더 바로 아래 삽입
+        history_ws.insert_row([test_id, now_str, words_str], 2)
     except Exception as e:
         st.error(f"히스토리 저장 실패: {e}")
-
 
 # --- 4. 메인 로직 ---
 st.set_page_config(page_title="스마트 토익 단어장", layout="wide")
@@ -147,7 +139,7 @@ if 'worksheet' not in st.session_state or 'df' not in st.session_state or st.sid
 worksheet = st.session_state.worksheet
 df_main = st.session_state.df
 
-menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기"])
+menu = st.sidebar.selectbox("메뉴 선택", ["단어 등록하기", "단어 목록 보기", "날짜별 단어 조회", "시험지 만들기", "오답 체크하기", "지옥의 오답 노트"])
 
 if menu == "단어 등록하기":
     st.header("📝 새 단어 등록")
@@ -163,9 +155,10 @@ if menu == "단어 등록하기":
                     else:
                         root = stemmer.stem(word)
                         today = get_today_kst()
-                        worksheet.append_row([word, mean, root, 0, today])
+                        worksheet.append_row([word, mean, root, 0, 0, today])
                         st.success(f"✅ '{word}' 저장 완료!")
                         time.sleep(1); st.rerun()
+
     with tab2:
         uploaded_file = st.file_uploader("CSV 선택", type=["csv"])
         if uploaded_file and st.button("🚀 구글 시트로 일괄 전송"):
@@ -181,7 +174,7 @@ if menu == "단어 등록하기":
                     w = str(row.iloc[0]).strip().lower()
                     m = str(row.iloc[1]).strip()
                     if w not in exist:
-                        r = stemmer.stem(w); new_rows.append([w, m, r, 0, today]); exist.append(w)
+                        r = stemmer.stem(w); new_rows.append([w, m, r, 0, 0, today]); exist.append(w)
                 if new_rows:
                     worksheet.append_rows(new_rows)
                     st.success(f"✅ {len(new_rows)}개 저장 완료!"); time.sleep(1); st.rerun()
@@ -199,7 +192,6 @@ elif menu == "단어 목록 보기":
         if not s_rows.empty:
             sel_w = s_rows.iloc[-1]["word"]
             try:
-                # API 호출 최소화를 위해 find 대신 판다스 인덱스 활용 권장하나 유지함
                 cell = worksheet.find(sel_w); row_idx = cell.row
                 st.divider(); st.subheader("⚙️ 단어 수정 및 삭제")
                 c1, c2, c3 = st.columns(3)
@@ -222,37 +214,17 @@ elif menu == "단어 목록 보기":
 elif menu == "날짜별 단어 조회":
     st.header("📅 날짜별 등록 현황")
     if not df_main.empty:
-        # 1. 날짜 선택 UI
         target = st.selectbox("날짜 선택", sorted(df_main['date'].astype(str).unique(), reverse=True))
-        
-        # 2. 해당 날짜 데이터 필터링
         date_df = df_main[df_main['date'].astype(str) == target].copy()
         
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button(f"📄 {target} 시험지 생성"):
-                # --- 핵심 수정 부분: 데이터를 무작위로 섞음 ---
-                shuffled_df = date_df.sample(frac=1).reset_index(drop=True)
-
-                # ID 생성 (날짜-조회단어날짜 형식)
-                now = datetime.now(timezone(timedelta(hours=9)))
-                test_id = f"{now.strftime('%y%m%d')}-{target.replace('-', '')}"
-    
-                selected_dicts = shuffled_df.to_dict('records')
-                pdf_buf = generate_pdf(selected_dicts, target, test_id)
-    
-                # 순서 저장
-                save_test_history(selected_dicts, test_id)
-                
-                pdf_buf = generate_pdf(shuffled_df.to_dict('records'), target)
-                st.download_button(
-                    label=f"📥 PDF 다운로드",
-                    data=pdf_buf.getvalue(),
-                    file_name=f"voca_{target}_random.pdf",
-                    mime="application/pdf"
-                )
-        
-        # 3. 화면 표시용 테이블은 가독성을 위해 정렬해서 보여줌
+        if st.button(f"📄 {target} 시험지 생성"):
+            shuffled_df = date_df.sample(frac=1).reset_index(drop=True)
+            now = datetime.now(timezone(timedelta(hours=9)))
+            test_id = f"{now.strftime('%y%m%d')}-{target.replace('-', '')}"
+            selected_dicts = shuffled_df.to_dict('records')
+            pdf_buf = generate_pdf(selected_dicts, target, test_id)
+            save_test_history(selected_dicts, test_id)
+            st.download_button(label="📥 PDF 다운로드", data=pdf_buf.getvalue(), file_name=f"voca_{target}.pdf", mime="application/pdf")
         st.table(date_df.sort_values("word")[['word', 'mean']])
 
 elif menu == "시험지 만들기":
@@ -262,34 +234,70 @@ elif menu == "시험지 만들기":
         num = st.number_input("문제 수", 5, len(df_main), 20)
         if st.button("시험지 생성 및 카운트 업데이트"):
             selected = select_test_words(df_main, num)
-
-            # --- [추가] 고유 시험지 ID 생성 (날짜시간 기반) ---
             now = datetime.now(timezone(timedelta(hours=9)))
             test_id = now.strftime("%y%m%d-%H%M") 
-            
-            # PDF 생성 시 ID 전달
             pdf_buf = generate_pdf(selected, "랜덤", test_id)
-            
-            # 시트에 시험지 순서 저장
             save_test_history(selected, test_id)
             
-            pdf_buf = generate_pdf(selected, "랜덤")
-            
-            # [수정] 효율적인 카운트 업데이트 (Batch Update 방식)
             with st.spinner("카운트 업데이트 중..."):
                 all_data = worksheet.get_all_values()
-                header = all_data[0]
-                rows = all_data[1:]
-                word_idx = header.index("word")
-                count_idx = header.index("count")
-                
+                header = all_data[0]; rows = all_data[1:]
+                word_idx = header.index("word"); count_idx = header.index("count")
                 sel_words = [item['word'] for item in selected]
                 for row in rows:
                     if row[word_idx] in sel_words:
                         row[count_idx] = int(row[count_idx] or 0) + 1
-                
-                # 시트의 데이터 영역 전체를 한 번에 덮어씌움 (API 호출 1회)
-                worksheet.update(f"A2", rows)
-                
+                worksheet.update("A2", rows)
             st.success("✅ 카운트 반영 완료!")
-            st.download_button("📥 PDF 다운로드", pdf_buf.getvalue(), "voca_test.pdf")
+            st.download_button("📥 PDF 다운로드", pdf_buf.getvalue(), f"test_{test_id}.pdf")
+
+elif menu == "오답 체크하기":
+    st.header("📝 시험지 오답 체크")
+    try:
+        client = get_gspread_client()
+        sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
+        history_ws = sh.worksheet("Last_Test")
+        history_data = history_ws.get_all_records()
+        if not history_data: st.warning("기록된 시험지가 없습니다.")
+        else:
+            test_options = [f"{r['test_id']} ({r['date']})" for r in history_data[:10]]
+            selected_option = st.selectbox("채점할 시험지 ID 선택", test_options)
+            selected_test = next(r for r in history_data if r['test_id'] == selected_option.split(" ")[0])
+            test_words = selected_test['words'].split(",")
+            st.info(f"💡 시험지의 번호와 아래 목록의 번호가 일치합니다.")
+            wrong_words = []
+            cols = st.columns(2)
+            for i, word in enumerate(test_words):
+                with cols[i % 2]:
+                    if st.checkbox(f"{i+1}. {word}", key=f"chk_{word}_{i}"):
+                        wrong_words.append(word)
+            if st.button("🔴 오답 데이터 시트에 반영"):
+                if not wrong_words: st.success("🎉 만점입니다!")
+                else:
+                    with st.spinner("오답 횟수 업데이트 중..."):
+                        all_data = worksheet.get_all_values()
+                        header = all_data[0]; rows = all_data[1:]
+                        word_idx = header.index("word"); wrong_idx = header.index("wrong_count")
+                        for row in rows:
+                            if row[word_idx] in wrong_words:
+                                row[wrong_idx] = int(row[wrong_idx] or 0) + 1
+                        worksheet.update("A2", rows)
+                        st.success(f"✅ {len(wrong_words)}개 반영 완료!"); time.sleep(1); st.rerun()
+    except Exception as e: st.error(f"오류: {e}")
+
+elif menu == "지옥의 오답 노트":
+    st.header("🔥 지옥의 오답 노트")
+    threshold = st.number_input("최소 오답 횟수", min_value=1, value=3, step=1)
+    wrong_df = df_main[df_main['wrong_count'].astype(int) >= threshold].copy()
+    if wrong_df.empty: st.warning("해당하는 단어가 없습니다.")
+    else:
+        st.success(f"해당 단어: {len(wrong_df)}개")
+        if st.button("📄 오답 노트 생성"):
+            shuffled = wrong_df.sample(frac=1).reset_index(drop=True)
+            selected_dicts = shuffled.to_dict('records')
+            now = datetime.now(timezone(timedelta(hours=9)))
+            test_id = f"WRONG-{threshold}-{now.strftime('%y%m%d')}"
+            pdf_buf = generate_pdf(selected_dicts, f"오답({threshold}회↑)", test_id)
+            save_test_history(selected_dicts, test_id)
+            st.download_button("📥 PDF 다운로드", pdf_buf.getvalue(), f"wrong_note_{test_id}.pdf")
+        st.table(wrong_df.sort_values("wrong_count", ascending=False)[['word', 'mean', 'wrong_count']])
