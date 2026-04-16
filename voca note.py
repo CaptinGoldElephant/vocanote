@@ -58,26 +58,39 @@ def sync_data():
         return None, pd.DataFrame(columns=["word", "mean", "root", "count", "wrong_count", "date"])
 
 def select_test_words(df, num):
-    # 가중치 계산: 오답 횟수는 높이고, 노출 횟수는 낮춰서 취약 단어 우선 추출
-    df['score'] = (df['wrong_count'].astype(int) * 2) - (df['count'].astype(int) * 0.5)
-    df_sorted = df.sort_values(by='score', ascending=False)
+    # [팩트체크] 'count'와 'wrong_count'를 숫자로 확실히 변환 후 계산
+    # score = (전체 노출 횟수) - (오답 횟수 * 0.7)
+    # 이렇게 하면 시험을 많이 봤어도 오답이 많으면 '공부 덜 한 단어'로 취급됩니다.
+    
+    # 1. 미세 가중치 점수 계산
+    # wrong_count 가중치를 0.7 정도로 낮춰서 '살짝만' 반영되게 했습니다.
+    df['study_score'] = df['count'].astype(int) - (df['wrong_count'].astype(int) * 0.7)
+    
+    # 2. study_score가 낮은 순(공부가 더 필요한 순)으로 정렬
+    # 3. 같은 점수 내에서는 무작위로 섞이도록 sample(frac=1) 먼저 실행
+    df_shuffled = df.sample(frac=1).sort_values(by='study_score', ascending=True)
     
     selected_list = []
     used_roots = set()
     
-    for _, row in df_sorted.iterrows():
+    # 4. 어근 중복 방지하며 추출
+    for _, row in df_shuffled.iterrows():
         if len(selected_list) >= num: break
         if str(row['root']) not in used_roots:
             selected_list.append(row)
             used_roots.add(str(row['root']))
             
+    # 5. 모자란 개수 채우기
     if len(selected_list) < num:
         current_sel = [w['word'] for w in selected_list]
-        remaining = df_sorted[~df_sorted['word'].isin(current_sel)]
+        remaining = df_shuffled[~df_shuffled['word'].isin(current_sel)]
         needed = num - len(selected_list)
         for _, row in remaining.head(needed).iterrows():
             selected_list.append(row)
+            
     return selected_list
+
+
 
 def generate_pdf(selected_words, title_prefix, test_id):
     buf = io.BytesIO()
