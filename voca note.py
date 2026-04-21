@@ -298,41 +298,45 @@ elif menu == "오답 체크하기":
                     st.success("🎉 만점입니다!")
                 else:
                     try:
-                        # --- 1. 메인 단어장 (Sheet1) wrong_count 누적 업데이트 ---
-                        with st.spinner("Sheet1(누적 오답수) 업데이트 중..."):
+                        # --- 1. 메인 단어장 (Sheet1) 누적 업데이트 ---
+                        with st.spinner("Sheet1 업데이트 중..."):
                             main_sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
-                            main_ws = main_sh.get_worksheet(0) # 첫 번째 시트 (Sheet1)
-                            
+                            main_ws = main_sh.get_worksheet(0)
                             all_data = main_ws.get_all_values()
-                            header = all_data[0]
-                            rows = all_data[1:]
+                            header = all_data[0]; rows = all_data[1:]
+                            word_idx = header.index("word"); wrong_idx = header.index("wrong_count")
                             
-                            word_idx = header.index("word")
-                            wrong_idx = header.index("wrong_count")
-                            
-                            updated_count = 0
                             for row in rows:
                                 if row[word_idx] in wrong_words:
                                     current_val = row[wrong_idx]
-                                    # 기존 숫자에 +1 (숫자가 아니면 0으로 취급)
                                     row[wrong_idx] = int(current_val if str(current_val).isdigit() else 0) + 1
-                                    updated_count += 1
-                            
-                            # 데이터가 있을 때만 Sheet1 업데이트
-                            if updated_count > 0:
-                                main_ws.update("A2", rows)
+                            main_ws.update("A2", rows)
 
-                        # --- 2. 히스토리 시트 (Last_Test) 실시간 오답 기록 ---
-                        with st.spinner("Last_Test(시험별 기록) 저장 중..."):
-                            # history_ws는 위에서 정의된 Last_Test 시트 변수
+                        # --- 2. Last_Test 시트 데이터 누적 (핵심 수정 부분) ---
+                        with st.spinner("Last_Test 기록 누적 중..."):
                             cell = history_ws.find(test_id_selected)
-                            # D열(4번째 열)에 틀린 단어들 쉼표로 나열해서 저장
-                            val = ",".join(wrong_words)
-                            history_ws.update_cell(cell.row, 4, val)
+                            row_num = cell.row
+                            
+                            # 기존에 기록된 오답들을 먼저 읽어옵니다 (D열은 4번째 열)
+                            existing_wrong_val = history_ws.cell(row_num, 4).value
+                            
+                            if existing_wrong_val and existing_wrong_val != "None":
+                                # 기존 오답 리스트와 새로 체크한 리스트를 합칩니다.
+                                existing_list = [w.strip() for w in existing_wrong_val.split(",") if w.strip()]
+                                # set을 사용해 중복 제거 후 다시 합침
+                                combined_list = list(set(existing_list + wrong_words))
+                                final_val = ",".join(combined_list)
+                            else:
+                                # 기존 기록이 없으면 현재 것만 저장
+                                final_val = ",".join(wrong_words)
+                            
+                            # 합쳐진 최종 리스트를 시트에 업데이트
+                            history_ws.update_cell(row_num, 4, final_val)
 
-                        st.success(f"✅ 양쪽 시트 모두 반영 완료! ({updated_count}개 단어 업데이트)")
+                        st.success(f"✅ 오답 기록이 누적되었습니다! (현재 총 {len(final_val.split(','))}개)")
                         time.sleep(1)
                         st.rerun()
+                    
                     except Exception as e:
                         st.error(f"반영 중 오류 발생: {e}")
 
