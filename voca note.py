@@ -271,41 +271,62 @@ elif menu == "오답 체크하기":
         sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
         history_ws = sh.worksheet("Last_Test")
         history_data = history_ws.get_all_records()
-        if not history_data: st.warning("기록된 시험지가 없습니다.")
+        
+        if not history_data:
+            st.warning("기록된 시험지가 없습니다.")
         else:
+            # 최근 시험 10개 표시
             test_options = [f"{r['test_id']} ({r['date']})" for r in history_data[:10]]
             selected_option = st.selectbox("채점할 시험지 ID 선택", test_options)
-            selected_test = next(r for r in history_data if r['test_id'] == selected_option.split(" ")[0])
+            
+            # 선택된 시험지 정보 추출
+            test_id_selected = selected_option.split(" ")[0]
+            selected_test = next(r for r in history_data if r['test_id'] == test_id_selected)
             test_words = selected_test['words'].split(",")
-            st.info(f"💡 시험지의 번호와 아래 목록의 번호가 일치합니다.")
+            
+            st.info(f"💡 시험지의 번호와 아래 목록의 번호가 일치합니다. 틀린 것만 체크하세요.")
+            
             wrong_words = []
             cols = st.columns(2)
             for i, word in enumerate(test_words):
                 with cols[i % 2]:
-                    if st.checkbox(f"{i+1}. {word}", key=f"chk_{word}_{i}"):
+                    if st.checkbox(f"{i+1}. {word}", key=f"chk_{test_id_selected}_{i}"):
                         wrong_words.append(word)
+
             if st.button("🔴 오답 데이터 시트에 반영"):
-                if not wrong_words: st.success("🎉 만점입니다!")
-                else:
-                    with st.spinner("오답 횟수 업데이트 중..."):
-                        all_data = worksheet.get_all_values()
-                        header = all_data[0]; rows = all_data[1:]
-                        word_idx = header.index("word"); wrong_idx = header.index("wrong_count")
-                        for row in rows:
-                            if row[word_idx] in wrong_words:
-                                row[wrong_idx] = int(row[wrong_idx] or 0) + 1
-                        worksheet.update("A2", rows)
-                        st.success(f"✅ {len(wrong_words)}개 반영 완료!"); time.sleep(1); st.rerun()
-    except Exception as e: st.error(f"오류: {e}")
+                # 1. 메인 단어장 wrong_count 업데이트
+                with st.spinner("메인 시트 업데이트 중..."):
+                    all_data = worksheet.get_all_values()
+                    header = all_data[0]; rows = all_data[1:]
+                    word_idx = header.index("word"); wrong_idx = header.index("wrong_count")
+                    
+                    for row in rows:
+                        if row[word_idx] in wrong_words:
+                            row[wrong_idx] = int(row[wrong_idx] or 0) + 1
+                    worksheet.update("A2", rows)
+
+                # 2. Last_Test 시트에 "진짜 틀린 단어들" 기록 (D열)
+                with st.spinner("채점 기록 저장 중..."):
+                    # test_id로 해당 행 찾기
+                    cell = history_ws.find(test_id_selected)
+                    # D열(4번째 열)에 오답 단어들을 쉼표로 합쳐서 저장
+                    # 만약 다 맞았으면 빈칸, 틀린 게 있으면 단어들 저장
+                    val = ",".join(wrong_words) if wrong_words else "None"
+                    history_ws.update_cell(cell.row, 4, val)
+
+                st.success(f"✅ 채점 완료! {len(wrong_words)}개 오답 기록됨")
+                time.sleep(1); st.rerun()
+                
+    except Exception as e:
+        st.error(f"오류: {e}")
 
 
 
 elif menu == "날짜별 오답 조회":
-    st.header("📅 날짜별 오답 모아보기")
-    st.write("선택한 날짜의 시험에서 틀렸던 단어들을 한눈에 확인하고 시험지를 만듭니다.")
+    st.header("📅 날짜별 오답 모아보기 (채점 기록 기준)")
+    st.write("사용자가 실제로 '오답 반영' 버튼을 눌렀던 기록만 표시합니다.")
 
     try:
-        # 1. 히스토리 데이터 확보
         client = get_gspread_client()
         sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
         history_ws = sh.worksheet("Last_Test")
@@ -315,63 +336,47 @@ elif menu == "날짜별 오답 조회":
             st.warning("기록된 시험 히스토리가 없습니다.")
         else:
             history_df = pd.DataFrame(history_data)
-            # 날짜만 추출 (yyyy-mm-dd)
             history_df['only_date'] = history_df['date'].str.split(' ').str[0]
             available_dates = sorted(history_df['only_date'].unique(), reverse=True)
 
-            # 2. 날짜 선택
-            target_date = st.selectbox("날짜 선택", available_dates)
+            target_date = st.selectbox("조회할 날짜 선택", available_dates)
 
-            # 3. 해당 날짜의 모든 시험 단어 합치기
+            # 해당 날짜의 시험들 필터링
             daily_tests = history_df[history_df['only_date'] == target_date]
-            all_words_that_day = []
-            for _, row in daily_tests.iterrows():
-                all_words_that_day.extend(row['words'].split(","))
             
-            # 중복 제거 (그날 여러 시험에 나온 단어 대비)
-            all_words_that_day = list(set(all_words_that_day))
+            # 진짜로 틀렸다고 기록된 단어들만 수집
+            real_wrong_list = []
+            for _, row in daily_tests.iterrows():
+                # D열(wrong_words) 값이 있고, "None"이 아닐 때만 파싱
+                w_val = str(row.get('wrong_words', '')).strip()
+                if w_val and w_val != "None" and w_val != "0":
+                    real_wrong_list.extend(w_val.split(","))
 
-            # 4. 메인 데이터에서 해당 단어들 중 '현재 오답인 것'만 필터링
-            # 즉, 그날 시험 친 단어들 중 wrong_count > 0 인 것들
-            wrong_results = df_main[
-                (df_main['word'].isin(all_words_that_day)) & 
-                (df_main['wrong_count'].astype(int) > 0)
-            ].copy()
+            # 중복 제거 및 빈값 정리
+            real_wrong_list = list(set([w.strip() for w in real_wrong_list if w.strip()]))
 
-            if wrong_results.empty:
-                st.info(f"✨ {target_date}에는 모든 문제를 맞히셨거나 기록된 오답이 없습니다!")
+            if not real_wrong_list:
+                st.info(f"ℹ️ {target_date}에는 채점(오답 반영)을 한 기록이 없거나 모두 맞으셨습니다.")
             else:
-                st.success(f"📍 {target_date}에 발생한 오답: {len(wrong_results)}개")
+                st.success(f"📍 {target_date}에 실제로 틀렸던 단어: {len(real_wrong_list)}개")
                 
-                # 단어 목록 보기 느낌의 테이블 (정렬: 많이 틀린 순)
-                display_df = wrong_results.sort_values("wrong_count", ascending=False)[['word', 'mean', 'wrong_count']]
-                st.table(display_df)
+                # 메인 시트에서 해당 단어 정보 가져오기
+                wrong_display_df = df_main[df_main['word'].isin(real_wrong_list)].copy()
+                st.table(wrong_display_df[['word', 'mean', 'wrong_count']])
 
                 st.divider()
                 
-                # 5. 섞어서 시험지 만들기
-                st.subheader("🔄 이 오답들로만 랜덤 시험지 만들기")
-                if st.button(f"📄 {target_date} 오답 랜덤 시험지 생성"):
-                    # 무작위 셔플
-                    shuffled_wrong = wrong_results.sample(frac=1).reset_index(drop=True)
-                    selected_dicts = shuffled_wrong.to_dict('records')
+                if st.button(f"📄 {target_date} 실제 오답들로만 시험지 생성"):
+                    shuffled_review = wrong_display_df.sample(frac=1).reset_index(drop=True)
+                    sel_dicts = shuffled_review.to_dict('records')
                     
-                    # ID 생성 (RE-날짜 형식)
                     now = datetime.now(timezone(timedelta(hours=9)))
-                    test_id = f"RE-{target_date.replace('-', '')}-{now.strftime('%H%M')}"
+                    test_id = f"REV-{target_date.replace('-', '')}-{now.strftime('%H%M')}"
                     
-                    # PDF 생성
-                    pdf_buf = generate_pdf(selected_dicts, f"{target_date} 복습", test_id)
+                    pdf_buf = generate_pdf(sel_dicts, f"{target_date} 오답복습", test_id)
+                    save_test_history(sel_dicts, test_id)
                     
-                    # 다시 히스토리에 저장 (이 시험지도 나중에 채점 가능하도록)
-                    save_test_history(selected_dicts, test_id)
-                    
-                    st.download_button(
-                        label="📥 복습 시험지 PDF 다운로드",
-                        data=pdf_buf.getvalue(),
-                        file_name=f"review_{target_date}.pdf",
-                        mime="application/pdf"
-                    )
+                    st.download_button("📥 복습 시험지 다운로드", pdf_buf.getvalue(), f"review_{test_id}.pdf")
 
     except Exception as e:
         st.error(f"오류 발생: {e}")
