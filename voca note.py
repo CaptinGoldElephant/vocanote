@@ -294,31 +294,48 @@ elif menu == "오답 체크하기":
                         wrong_words.append(word)
 
             if st.button("🔴 오답 데이터 시트에 반영"):
-                # 1. 메인 단어장 wrong_count 업데이트
-                with st.spinner("메인 시트 업데이트 중..."):
-                    all_data = worksheet.get_all_values()
-                    header = all_data[0]; rows = all_data[1:]
-                    word_idx = header.index("word"); wrong_idx = header.index("wrong_count")
+                if not wrong_words:
+                    st.success("🎉 만점입니다!")
+                else:
+                    try:
+                        # --- 1. 메인 단어장 (Sheet1) wrong_count 누적 업데이트 ---
+                        with st.spinner("Sheet1(누적 오답수) 업데이트 중..."):
+                            main_sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
+                            main_ws = main_sh.get_worksheet(0) # 첫 번째 시트 (Sheet1)
+                            
+                            all_data = main_ws.get_all_values()
+                            header = all_data[0]
+                            rows = all_data[1:]
+                            
+                            word_idx = header.index("word")
+                            wrong_idx = header.index("wrong_count")
+                            
+                            updated_count = 0
+                            for row in rows:
+                                if row[word_idx] in wrong_words:
+                                    current_val = row[wrong_idx]
+                                    # 기존 숫자에 +1 (숫자가 아니면 0으로 취급)
+                                    row[wrong_idx] = int(current_val if str(current_val).isdigit() else 0) + 1
+                                    updated_count += 1
+                            
+                            # 데이터가 있을 때만 Sheet1 업데이트
+                            if updated_count > 0:
+                                main_ws.update("A2", rows)
+
+                        # --- 2. 히스토리 시트 (Last_Test) 실시간 오답 기록 ---
+                        with st.spinner("Last_Test(시험별 기록) 저장 중..."):
+                            # history_ws는 위에서 정의된 Last_Test 시트 변수
+                            cell = history_ws.find(test_id_selected)
+                            # D열(4번째 열)에 틀린 단어들 쉼표로 나열해서 저장
+                            val = ",".join(wrong_words)
+                            history_ws.update_cell(cell.row, 4, val)
+
+                        st.success(f"✅ 양쪽 시트 모두 반영 완료! ({updated_count}개 단어 업데이트)")
+                        time.sleep(1)
+                        st.rerun()
                     
-                    for row in rows:
-                        if row[word_idx] in wrong_words:
-                            row[wrong_idx] = int(row[wrong_idx] or 0) + 1
-                    worksheet.update("A2", rows)
-
-                # 2. Last_Test 시트에 "진짜 틀린 단어들" 기록 (D열)
-                with st.spinner("채점 기록 저장 중..."):
-                    # test_id로 해당 행 찾기
-                    cell = history_ws.find(test_id_selected)
-                    # D열(4번째 열)에 오답 단어들을 쉼표로 합쳐서 저장
-                    # 만약 다 맞았으면 빈칸, 틀린 게 있으면 단어들 저장
-                    val = ",".join(wrong_words) if wrong_words else "None"
-                    history_ws.update_cell(cell.row, 4, val)
-
-                st.success(f"✅ 채점 완료! {len(wrong_words)}개 오답 기록됨")
-                time.sleep(1); st.rerun()
-                
-    except Exception as e:
-        st.error(f"오류: {e}")
+                    except Exception as e:
+                        st.error(f"반영 중 오류 발생: {e}")
 
 
 
