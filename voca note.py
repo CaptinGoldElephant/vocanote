@@ -335,9 +335,9 @@ elif menu == "오답 체크하기":
                         st.rerun()
                     except Exception as e:
                         st.error(f"반영 중 오류 발생: {e}")
-except Exception as e:
-        st.error(f"오류: {e}")
 
+    except Exception as e:
+        st.error(f"오류: {e}")
 
 elif menu == "날짜별 오답 조회":
     st.header("📅 날짜별 오답 모아보기 (채점 기록 기준)")
