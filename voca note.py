@@ -260,7 +260,7 @@ elif menu == "시험지 만들기":
                 for row in rows:
                     if row[word_idx] in sel_words:
                         row[count_idx] = int(row[count_idx] or 0) + 1
-                worksheet.update("A2", rows)
+                worksheet.update(range_name="A2", values=rows)
             st.success("✅ 카운트 반영 완료!")
             st.download_button("📥 PDF 다운로드", pdf_buf.getvalue(), f"test_{test_id}.pdf")
 
