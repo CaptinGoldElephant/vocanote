@@ -312,33 +312,32 @@ elif menu == "오답 체크하기":
                                     row[wrong_idx] = int(current_val if str(current_val).isdigit() else 0) + 1
                             main_ws.update("A2", rows)
 
-                        # --- 2. Last_Test 시트 데이터 누적 (핵심 수정 부분) ---
+                        # --- 2. Last_Test 시트 데이터 누적 (최적화 버전) ---
                         with st.spinner("Last_Test 기록 누적 중..."):
-                            cell = history_ws.find(test_id_selected)
-                            row_num = cell.row
+                            # [수정] 다시 cell()로 읽지 않고, 이미 가지고 있는 history_data에서 기존 오답을 찾습니다.
+                            # selected_test 변수는 위에서 이미 history_data를 통해 정의되어 있습니다.
+                            existing_wrong_val = selected_test.get('wrong_words', '')
                             
-                            # 기존에 기록된 오답들을 먼저 읽어옵니다 (D열은 4번째 열)
-                            existing_wrong_val = history_ws.cell(row_num, 4).value
-                            
-                            if existing_wrong_val and existing_wrong_val != "None":
-                                # 기존 오답 리스트와 새로 체크한 리스트를 합칩니다.
-                                existing_list = [w.strip() for w in existing_wrong_val.split(",") if w.strip()]
-                                # set을 사용해 중복 제거 후 다시 합침
+                            if existing_wrong_val and str(existing_wrong_val) != "None":
+                                existing_list = [w.strip() for w in str(existing_wrong_val).split(",") if w.strip()]
                                 combined_list = list(set(existing_list + wrong_words))
                                 final_val = ",".join(combined_list)
                             else:
-                                # 기존 기록이 없으면 현재 것만 저장
                                 final_val = ",".join(wrong_words)
                             
-                            # 합쳐진 최종 리스트를 시트에 업데이트
-                            history_ws.update_cell(row_num, 4, final_val)
+                            # 업데이트는 한 번만 수행
+                            cell = history_ws.find(test_id_selected)
+                            history_ws.update_cell(cell.row, 4, final_val)
 
-                        st.success(f"✅ 오답 기록이 누적되었습니다! (현재 총 {len(final_val.split(','))}개)")
+                        st.success(f"✅ 오답 기록이 누적되었습니다!")
                         time.sleep(1)
                         st.rerun()
                     
                     except Exception as e:
-                        st.error(f"반영 중 오류 발생: {e}")
+                        if "429" in str(e):
+                            st.error("⚠️ 구글 API 요청이 너무 많습니다. 1분만 기다렸다가 다시 시도해주세요!")
+                        else:
+                            st.error(f"반영 중 오류 발생: {e}")
 
     except Exception as e:
         st.error(f"오류: {e}")
