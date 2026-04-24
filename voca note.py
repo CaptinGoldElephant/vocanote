@@ -108,9 +108,6 @@ def select_test_words(df, num):
                 
         return selected_list
 
-   
-
-
 def generate_pdf(selected_words, title_prefix, test_id):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
