@@ -76,9 +76,9 @@ def select_test_words(df, num):
                 test_date_str = record['date'].split(' ')[0]
                 test_date = datetime.strptime(test_date_str, "%Y-%m-%d").replace(tzinfo=timezone(timedelta(hours=9)))
                 
-                # 오늘 날짜와 비교해서 2일 이내인 경우 제외 목록에 추가
+                # 오늘 날짜와 비교해서 1일 이내인 경우 제외 목록에 추가
                 diff = (now - test_date).days
-                if 0 <= diff <= 2:
+                if 0 <= diff <= 1:
                     words_to_exclude = [w.strip() for w in w_val.split(",") if w.strip()]
                     excluded_words.update(words_to_exclude)
         
