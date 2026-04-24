@@ -58,38 +58,57 @@ def sync_data():
         return None, pd.DataFrame(columns=["word", "mean", "root", "count", "wrong_count", "date"])
 
 def select_test_words(df, num):
-    # [팩트체크] 'count'와 'wrong_count'를 숫자로 확실히 변환 후 계산
-    # score = (전체 노출 횟수) - (오답 횟수 * 0.7)
-    # 이렇게 하면 시험을 많이 봤어도 오답이 많으면 '공부 덜 한 단어'로 취급됩니다.
-    
-    # 1. 미세 가중치 점수 계산
-    # wrong_count 가중치를 0.7 정도로 낮춰서 '살짝만' 반영되게 했습니다.
-    df['study_score'] = df['count'].astype(int) - (df['wrong_count'].astype(int) * 0.7)
-    
-    # 2. study_score가 낮은 순(공부가 더 필요한 순)으로 정렬
-    # 3. 같은 점수 내에서는 무작위로 섞이도록 sample(frac=1) 먼저 실행
-    df_shuffled = df.sample(frac=1).sort_values(by='study_score', ascending=True)
-    
-    selected_list = []
-    used_roots = set()
-    
-    # 4. 어근 중복 방지하며 추출
-    for _, row in df_shuffled.iterrows():
-        if len(selected_list) >= num: break
-        if str(row['root']) not in used_roots:
-            selected_list.append(row)
-            used_roots.add(str(row['root']))
-            
-    # 5. 모자란 개수 채우기
-    if len(selected_list) < num:
-        current_sel = [w['word'] for w in selected_list]
-        remaining = df_shuffled[~df_shuffled['word'].isin(current_sel)]
-        needed = num - len(selected_list)
-        for _, row in remaining.head(needed).iterrows():
-            selected_list.append(row)
-            
-    return selected_list
+    try:
+        # 1. 'Last_Test' 시트에서 최근 오답 기록들 가져오기
+        client = get_gspread_client()
+        sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
+        history_ws = sh.worksheet("Last_Test")
+        history_data = history_ws.get_all_records()
+        
+        # 제외할 단어 목록 생성
+        excluded_words = set()
+        now = datetime.now(timezone(timedelta(hours=9)))
+        
+        for record in history_data:
+            w_val = str(record.get('wrong_words', '')).strip()
+            if w_val and w_val != "None" and w_val != "0":
+                # 기록된 날짜 파싱 (예: 2024-04-24 23:20)
+                test_date_str = record['date'].split(' ')[0]
+                test_date = datetime.strptime(test_date_str, "%Y-%m-%d").replace(tzinfo=timezone(timedelta(hours=9)))
+                
+                # 오늘 날짜와 비교해서 3일 이내인 경우 제외 목록에 추가
+                diff = (now - test_date).days
+                if 0 <= diff <= 3:
+                    words_to_exclude = [w.strip() for w in w_val.split(",") if w.strip()]
+                    excluded_words.update(words_to_exclude)
+        
+        # 2. 메인 데이터프레임에서 제외 목록에 있는 단어 제거
+        df_filtered = df[~df['word'].isin(excluded_words)].copy()
+        
 
+        # 3. 기존 로직 (미세 가중치 + 셔플) 유지
+        df_filtered['study_score'] = df_filtered['count'].astype(int) - (df_filtered['wrong_count'].astype(int) * 0.7)
+        df_shuffled = df_filtered.sample(frac=1).sort_values(by='study_score', ascending=True)
+        
+        selected_list = []
+        used_roots = set()
+        
+        for _, row in df_shuffled.iterrows():
+            if len(selected_list) >= num: break
+            if str(row['root']) not in used_roots:
+                selected_list.append(row)
+                used_roots.add(str(row['root']))
+                
+        if len(selected_list) < num:
+            current_sel = [w['word'] for w in selected_list]
+            remaining = df_shuffled[~df_shuffled['word'].isin(current_sel)]
+            needed = num - len(selected_list)
+            for _, row in remaining.head(needed).iterrows():
+                selected_list.append(row)
+                
+        return selected_list
+
+   
 
 
 def generate_pdf(selected_words, title_prefix, test_id):
