@@ -108,6 +108,13 @@ def select_test_words(df, num):
                 
         return selected_list
 
+    except Exception as e:
+        # 오류 발생 시 안전하게 전체 리스트에서 무작위 추출로 대체
+        st.error(f"유예 로직 오류: {e}")
+        return df.sample(n=min(num, len(df))).to_dict('records')
+
+
+
 def generate_pdf(selected_words, title_prefix, test_id):
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
