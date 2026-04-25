@@ -59,58 +59,88 @@ def sync_data():
 
 def select_test_words(df, num):
     try:
-        # 1. 'Last_Test' 시트에서 최근 오답 기록들 가져오기
+        # --- [1단계] 유예 로직 (어제오늘 오답은 추출 대상에서 아예 제외) ---
         client = get_gspread_client()
         sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
         history_ws = sh.worksheet("Last_Test")
         history_data = history_ws.get_all_records()
         
-        # 제외할 단어 목록 생성
         excluded_words = set()
         now = datetime.now(timezone(timedelta(hours=9)))
         
         for record in history_data:
             w_val = str(record.get('wrong_words', '')).strip()
             if w_val and w_val != "None" and w_val != "0":
-                # 기록된 날짜 파싱 (예: 2024-04-24 23:20)
+                # 날짜 파싱 (yyyy-mm-dd)
                 test_date_str = record['date'].split(' ')[0]
                 test_date = datetime.strptime(test_date_str, "%Y-%m-%d").replace(tzinfo=timezone(timedelta(hours=9)))
                 
-                # 오늘 날짜와 비교해서 1일 이내인 경우 제외 목록에 추가
+                # 오늘(0)과 어제(1) 기록된 오답 제외
                 diff = (now - test_date).days
                 if 0 <= diff <= 1:
                     words_to_exclude = [w.strip() for w in w_val.split(",") if w.strip()]
                     excluded_words.update(words_to_exclude)
         
-        # 2. 메인 데이터프레임에서 제외 목록에 있는 단어 제거
+        # 유예 기간 단어들을 필터링한 데이터프레임 생성
         df_filtered = df[~df['word'].isin(excluded_words)].copy()
-        
 
-        # 3. 기존 로직 (미세 가중치 + 셔플) 유지
-        df_filtered['study_score'] = df_filtered['count'].astype(int) - (df_filtered['wrong_count'].astype(int) * 0.7)
-        df_shuffled = df_filtered.sample(frac=1).sort_values(by='study_score', ascending=True)
-        
+        # --- [2단계] 가중치(확률) 계산 함수 정의 ---
+        def calculate_weight(row):
+            cnt = int(row['count'])
+            wrg = int(row['wrong_count'])
+            
+            # 1순위: 새 단어 (기준 가중치 100)
+            if cnt == 0:
+                return 100.0
+            
+            # 2순위: 오답 단어 (많이 틀릴수록 가중치가 완만하게 상승하여 100에 근접)
+            # 로그 함수를 사용하여 지수 함수처럼 너무 튀지 않게 조절함
+            if wrg > 0:
+                # 1번 틀림: 약 50점 / 3번 틀림: 약 80점 / 7번 틀림: 약 110점(새 단어 추월 시작)
+                return 20.0 + (30.0 * math.log2(wrg + 1))
+            
+            # 3순위: 이미 아는 단어 (최하위 가중치 1)
+            return 1.0
+
+        df_filtered['weight'] = df_filtered.apply(calculate_weight, axis=1)
+
+        # --- [3단계] 가중치 기반 비복원 추출 (중복 없이 뽑기) ---
+        candidates = df_filtered.to_dict('records')
         selected_list = []
         used_roots = set()
-        
-        for _, row in df_shuffled.iterrows():
-            if len(selected_list) >= num: break
-            if str(row['root']) not in used_roots:
-                selected_list.append(row)
-                used_roots.add(str(row['root']))
-                
+
+        # 뽑을 개수만큼 반복하거나 후보가 떨어질 때까지 반복
+        while len(selected_list) < num and candidates:
+            # 현재 후보들의 가중치 리스트 추출
+            weights = [c['weight'] for c in candidates]
+            
+            # 가중치에 따라 1개 무작위 추첨
+            picked = random.choices(candidates, weights=weights, k=1)[0]
+            
+            # 어근 중복 방지 로직
+            root = str(picked.get('root', ''))
+            if root not in used_roots:
+                selected_list.append(picked)
+                used_roots.add(root)
+            
+            # 뽑힌 단어는 성공 여부와 상관없이 후보에서 제거 (무한 루프 방지)
+            candidates.remove(picked)
+
+        # 자리가 남을 경우(어근 중복 등으로 인해) 부족한 만큼 아무나 추가 채우기
         if len(selected_list) < num:
-            current_sel = [w['word'] for w in selected_list]
-            remaining = df_shuffled[~df_shuffled['word'].isin(current_sel)]
+            current_words = [w['word'] for w in selected_list]
+            remaining = [c for c in df_filtered.to_dict('records') if c['word'] not in current_words]
             needed = num - len(selected_list)
-            for _, row in remaining.head(needed).iterrows():
-                selected_list.append(row)
-                
+            selected_list.extend(random.sample(remaining, min(needed, len(remaining))))
+
+        # 최종 시험지는 다시 한번 셔플하여 순서 랜덤화
+        random.shuffle(selected_list)
         return selected_list
 
     except Exception as e:
-        # 오류 발생 시 안전하게 전체 리스트에서 무작위 추출로 대체
-        st.error(f"유예 로직 오류: {e}")
+        # 오류 발생 시 안전하게 기본 샘플링으로 대체
+        import streamlit as st
+        st.error(f"알고리즘 오류 발생: {e}")
         return df.sample(n=min(num, len(df))).to_dict('records')
 
 
