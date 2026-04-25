@@ -43,6 +43,15 @@ def get_gspread_client():
     )
     return gspread.authorize(creds)
 
+
+@st.cache_data(ttl=600)
+def get_cached_data(sheet_key, worksheet_name):
+    client = get_gspread_client()
+    sh = client.open_by_key(sheet_key)
+    ws = sh.worksheet(worksheet_name)
+    return ws.get_all_records()
+
+
 def sync_data():
     try:
         client = get_gspread_client()
@@ -321,93 +330,99 @@ elif menu == "시험지 만들기":
 elif menu == "오답 체크하기":
     st.header("📝 시험지 오답 체크")
     try:
-        client = get_gspread_client()
-        sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
-        history_ws = sh.worksheet("Last_Test")
-        
-        # [수정] 시트 자체가 최신순이므로 역순 뒤집기([::-1]) 제거
-        history_data = history_ws.get_all_records()
+        # [수정] 캐싱된 데이터를 가져옵니다. (체크박스 클릭 시 API 호출 방지)
+        history_data = get_cached_data("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8", "Last_Test")
         
         if not history_data:
             st.warning("기록된 시험지가 없습니다.")
         else:
-            # 1. 이미 최신순이므로 그대로 상위 10개 표시
+            # 최근 10개 시험지 (시트가 최신순이라고 하셨으므로 그대로 사용)
             test_options = [f"{r['test_id']} ({r['date']})" for r in history_data[:10]]
             selected_option = st.selectbox("채점할 시험지 ID 선택", test_options)
             
-            # 2. 선택된 ID와 일치하는 데이터 찾기 (문자열 변환 비교)
             test_id_selected = str(selected_option.split(" ")[0])
             selected_test = next((r for r in history_data if str(r['test_id']) == test_id_selected), None)
             
             if selected_test:
-                # 단어 목록 파싱 (공백 제거)
                 test_words = [w.strip() for w in str(selected_test['words']).split(",") if w.strip()]
                 
-                st.info(f"💡 시트에 기록된 최신 순서대로 표시됩니다. 틀린 것만 체크하세요.")
+                # [중요] 체크된 상태를 세션에 저장하여 리런 시 API 호출 차단
+                if 'temp_wrong_selection' not in st.session_state:
+                    st.session_state.temp_wrong_selection = set()
+
+                st.info(f"💡 체크박스를 눌러도 구글 API를 호출하지 않습니다. (로딩 기호 무시)")
                 
-                wrong_words = []
+                # 체크박스 루프
                 cols = st.columns(2)
                 for i, word in enumerate(test_words):
                     with cols[i % 2]:
+                        # 각 체크박스의 상태를 세션 스테이트에 기록
                         if st.checkbox(f"{i+1}. {word}", key=f"chk_{test_id_selected}_{i}"):
-                            wrong_words.append(word)
+                            st.session_state.temp_wrong_selection.add(word)
+                        else:
+                            st.session_state.temp_wrong_selection.discard(word)
 
                 if st.button("🔴 오답 데이터 시트에 반영"):
-                    if not wrong_words:
-                        st.success("🎉 만점입니다! 따로 반영할 오답이 없네요.")
+                    # 실제 반영할 리스트
+                    final_wrong_words = list(st.session_state.temp_wrong_selection)
+                    
+                    if not final_wrong_words:
+                        st.success("🎉 만점입니다! 반영할 오답이 없네요.")
                     else:
                         try:
-                            # --- 1. 단어장(Sheet1) 누적 업데이트 ---
-                            with st.spinner("단어장(Sheet1) 업데이트 중..."):
+                            # 반영 시에는 실시간 클라이언트를 새로 가져옴 (쓰기 작업)
+                            client = get_gspread_client()
+                            sh = client.open_by_key("1BYuQhbPLwnLxBHu4gjf-1H8fNoYvRRwIyg2TU1vfvw8")
+                            
+                            with st.spinner("단어장(Sheet1) 및 Last_Test 업데이트 중..."):
+                                # 1. 단어장 업데이트 (한 번에 갱신)
                                 main_ws = sh.get_worksheet(0)
                                 all_data = main_ws.get_all_values()
                                 header = all_data[0]
                                 rows = all_data[1:]
-                                
                                 w_idx = header.index("word")
                                 wc_idx = header.index("wrong_count")
                                 
                                 updated_rows = []
                                 for row in rows:
-                                    if row[w_idx] in wrong_words:
+                                    if row[w_idx] in final_wrong_words:
                                         curr = str(row[wc_idx]).strip()
                                         row[wc_idx] = int(curr) + 1 if curr.isdigit() else 1
                                     updated_rows.append(row)
-                                
-                                # 데이터가 있을 때만 한 번에 업데이트
                                 main_ws.update("A2", updated_rows)
 
-                            # --- 2. Last_Test 시트에 오답 기록 합치기 ---
-                            with st.spinner("Last_Test 오답 누적 기록 중..."):
+                                # 2. Last_Test 업데이트
+                                history_ws = sh.worksheet("Last_Test")
                                 existing_wrong = str(selected_test.get('wrong_words', '')).strip()
                                 if existing_wrong and existing_wrong not in ["None", "0", ""]:
-                                    existing_list = [w.strip() for w in existing_wrong.split(",") if w.strip()]
-                                    # 기존 오답 + 새로 체크한 오답 (중복 제거)
-                                    final_list = list(set(existing_list + wrong_words))
-                                    final_val = ",".join(final_list)
+                                    e_list = [w.strip() for w in existing_wrong.split(",") if w.strip()]
+                                    combined = list(set(e_list + final_wrong_words))
+                                    final_val = ",".join(combined)
                                 else:
-                                    final_val = ",".join(wrong_words)
+                                    final_val = ",".join(final_wrong_words)
                                 
-                                # 행 위치 찾아서 업데이트
+                                # test_id가 있는 행 찾기 (API 최소화를 위해 find 사용)
                                 cell = history_ws.find(test_id_selected)
                                 if cell:
                                     history_ws.update_cell(cell.row, 4, final_val)
 
-                            st.success(f"✅ 오답 기록이 성공적으로 반영되었습니다!")
+                            st.success(f"✅ {len(final_wrong_words)}개의 오답이 반영되었습니다!")
+                            # [핵심] 반영 후 캐시와 세션 초기화
+                            st.cache_data.clear()
+                            st.session_state.temp_wrong_selection = set()
                             time.sleep(1)
                             st.rerun()
                             
                         except Exception as e:
-                            if "429" in str(e):
-                                st.error("⚠️ 요청이 너무 많습니다. 1분 뒤에 다시 시도해주세요.")
-                            else:
-                                st.error(f"반영 중 오류 발생: {e}")
+                            st.error(f"반영 오류: {e}")
             else:
-                st.error("시험지 데이터를 찾을 수 없습니다. 시트를 확인해주세요.")
+                st.error("시험지 데이터를 찾을 수 없습니다.")
 
     except Exception as e:
-        st.error(f"데이터 로딩 중 오류: {e}")
-
+        if "429" in str(e):
+            st.error("⚠️ 구글 API 한도 초과! 잠시 후(1분 뒤) 다시 시도하세요.")
+        else:
+            st.error(f"데이터 로딩 오류: {e}")
 
 elif menu == "날짜별 오답 조회":
     st.header("📅 날짜별 오답 모아보기 (채점 기록 기준)")
